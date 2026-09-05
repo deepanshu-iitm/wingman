@@ -107,7 +107,7 @@ export function attachInterviewStream(
       smallestUrl.searchParams.set('encoding', 'linear16');
       smallestUrl.searchParams.set('sample_rate', '16000');
       smallestUrl.searchParams.set('endpointing', 'true');
-      smallestUrl.searchParams.set('eou_timeout_ms', '5000');
+      smallestUrl.searchParams.set('eou_timeout_ms', '3000');
       smallestUrl.searchParams.set('vad_events', 'true');
       smallestUrl.searchParams.set('full_transcript', 'true');
 
