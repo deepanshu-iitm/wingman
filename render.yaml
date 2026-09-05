@@ -1,0 +1,27 @@
+# Render Blueprint for the Wingman orchestrator (Node WebSocket API).
+# The Vite client is deployed separately on Vercel.
+#
+# After first deploy, set CLIENT_ORIGIN to the Vercel URL and add the secret
+# keys (OPENAI_API_KEY, SMALLEST_API_KEY) in the Render dashboard.
+services:
+  - type: web
+    name: wingman-orchestrator
+    runtime: node
+    rootDir: orchestrator
+    plan: free
+    healthCheckPath: /health
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    startCommand: node dist/server.js
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: OPENAI_MODEL
+        value: gpt-5-nano
+      # Secrets — set these in the Render dashboard (sync: false keeps them
+      # out of git). CLIENT_ORIGIN must match the deployed Vercel origin.
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SMALLEST_API_KEY
+        sync: false
+      - key: CLIENT_ORIGIN
+        sync: false
