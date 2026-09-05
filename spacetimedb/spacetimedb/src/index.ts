@@ -62,6 +62,7 @@ const match_session = table(
   {
     id: t.u64().primaryKey().autoInc(),
     owner: t.identity(),
+    orchestratorIdentity: t.identity(),
     initiatorPersonaId: t.u64(),
     status: t.string(), // 'matching' | 'complete' | 'timed_out'
     totalConversations: t.u32(),
@@ -87,6 +88,7 @@ const conversation = table(
     partnerPersonaId: t.u64(),
     initiatorOwner: t.identity(), // denorm of persona.owner — for visibility filter
     partnerOwner: t.identity(),   // denorm of persona.owner — for visibility filter
+    orchestratorIdentity: t.identity(),
     partnerDisplayName: t.string(),
     status: t.string(), // 'pending' | 'active' | 'complete'
     signalStrength: t.u32(), // 0..100 — live directional indicator (NOT a %match)
@@ -116,6 +118,9 @@ const message = table(
     id: t.u64().primaryKey().autoInc(),
     conversationId: t.u64().index('btree'),
     sessionId: t.u64().index('btree'),
+    initiatorOwner: t.identity(),
+    partnerOwner: t.identity(),
+    orchestratorIdentity: t.identity(),
     senderPersonaId: t.u64(),
     senderName: t.string(),
     content: t.string(),
@@ -131,6 +136,8 @@ const match_result = table(
   {
     id: t.u64().primaryKey().autoInc(),
     sessionId: t.u64().index('btree'),
+    owner: t.identity(),
+    orchestratorIdentity: t.identity(),
     partnerPersonaId: t.u64(),
     partnerDisplayName: t.string(),
     rank: t.u32(),
@@ -172,21 +179,6 @@ const orchestrator_config = table(
   }
 );
 
-/**
- * Public mirror of the orchestrator identity — contains only the identity,
- * none of the admin secrets in orchestrator_config. Visibility filter SQL
- * may only reference public tables, so this single-row table is what the
- * filters use for the orchestrator exemption check.
- * Kept in sync by registerOrchestrator.
- */
-const orchestrator_identity = table(
-  { name: 'orchestrator_identity', public: true },
-  {
-    id: t.u8().primaryKey(), // always 0 — single row
-    identity: t.identity(),
-  }
-);
-
 /** Scheduled 3-minute watchdog. Private. */
 const deadline_timer = table(
   {
@@ -209,7 +201,6 @@ const spacetimedb = schema({
   match_result,
   conversation_archive,
   orchestrator_config,
-  orchestrator_identity,
   deadline_timer,
 });
 export default spacetimedb;
@@ -272,20 +263,14 @@ export const orchestratorPersona = spacetimedb.view(
 // a client receives ONLY the rows it is authorised to see, regardless of what
 // SQL query it subscribes with. "SELECT * + filter client-side" is not used.
 //
-// All referenced tables are public: visibility filter SQL cannot safely query
-// private tables (see SpacetimeDB issue #2830). The orchestrator exemption
-// uses the public orchestrator_identity mirror instead of the private
-// orchestrator_config table. Conversation owner identity is denormalised into
-// the conversation row so we never need to join the private persona table.
+// Participant and orchestrator identities are denormalised onto each row so
+// these filters use only direct comparisons. Maincloud visibility-filter SQL
+// does not support EXISTS subqueries or uncorrelated joins.
 
-const ORCH_CHECK =
-  `EXISTS (SELECT 1 FROM orchestrator_identity WHERE identity = :sender)`;
-
-/** A client sees only their own match sessions (or the orchestrator sees all). */
+/** A client sees only their own sessions; the registered worker sees all. */
 export const matchSessionVisibility = spacetimedb.clientVisibilityFilter.sql(`
   SELECT * FROM match_session
-  WHERE owner = :sender
-     OR ${ORCH_CHECK}
+  WHERE owner = :sender OR orchestratorIdentity = :sender
 `);
 
 /**
@@ -297,31 +282,21 @@ export const conversationVisibility = spacetimedb.clientVisibilityFilter.sql(`
   SELECT * FROM conversation
   WHERE initiatorOwner = :sender
      OR partnerOwner = :sender
-     OR ${ORCH_CHECK}
+     OR orchestratorIdentity = :sender
 `);
 
-/**
- * A client sees a message only if they can see its parent conversation.
- * Joins only the public conversation table.
- */
+/** A client sees messages only for conversations they participate in. */
 export const messageVisibility = spacetimedb.clientVisibilityFilter.sql(`
-  SELECT m.* FROM message m
-  WHERE ${ORCH_CHECK}
-     OR EXISTS (
-       SELECT 1 FROM conversation c
-       WHERE c.id = m.conversationId
-         AND (c.initiatorOwner = :sender OR c.partnerOwner = :sender)
-     )
+  SELECT * FROM message
+  WHERE initiatorOwner = :sender
+     OR partnerOwner = :sender
+     OR orchestratorIdentity = :sender
 `);
 
-/** A client sees match results only for their own sessions (or the orchestrator sees all). */
+/** A client sees only their own results; the registered worker sees all. */
 export const matchResultVisibility = spacetimedb.clientVisibilityFilter.sql(`
-  SELECT mr.* FROM match_result mr
-  WHERE ${ORCH_CHECK}
-     OR EXISTS (
-       SELECT 1 FROM match_session ms
-       WHERE ms.id = mr.sessionId AND ms.owner = :sender
-     )
+  SELECT * FROM match_result
+  WHERE owner = :sender OR orchestratorIdentity = :sender
 `);
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
@@ -352,13 +327,18 @@ export const registerOrchestrator = spacetimedb.reducer(
       ...config,
       orchestratorIdentity,
     });
-    // Keep the public mirror in sync so visibility filter SQL can check the
-    // orchestrator identity without touching the private orchestrator_config table.
-    const existing = ctx.db.orchestrator_identity.id.find(0);
-    if (existing) {
-      ctx.db.orchestrator_identity.id.update({ id: 0, identity: orchestratorIdentity });
-    } else {
-      ctx.db.orchestrator_identity.insert({ id: 0, identity: orchestratorIdentity });
+    // Keep denormalized access grants valid when the worker identity rotates.
+    for (const row of ctx.db.match_session.iter()) {
+      ctx.db.match_session.id.update({ ...row, orchestratorIdentity });
+    }
+    for (const row of ctx.db.conversation.iter()) {
+      ctx.db.conversation.id.update({ ...row, orchestratorIdentity });
+    }
+    for (const row of ctx.db.message.iter()) {
+      ctx.db.message.id.update({ ...row, orchestratorIdentity });
+    }
+    for (const row of ctx.db.match_result.iter()) {
+      ctx.db.match_result.id.update({ ...row, orchestratorIdentity });
     }
   }
 );
@@ -407,6 +387,8 @@ function finalizeSessionInternal(ctx: Ctx, sessionId: bigint, timedOut: boolean)
       ctx.db.match_result.insert({
         id: 0n,
         sessionId,
+        owner: session.owner,
+        orchestratorIdentity: session.orchestratorIdentity,
         partnerPersonaId: c.partnerPersonaId,
         partnerDisplayName: c.partnerDisplayName,
         rank: i + 1,
@@ -461,6 +443,11 @@ export const startMatch = spacetimedb.reducer(
     if (!me.owner.equals(ctx.sender)) throw new SenderError('not your persona');
     // Reject duplicate fan-outs: repeated clicks would multiply LLM cost.
     if (me.status !== 'available') throw new SenderError('this persona is already matching');
+    const orchestratorIdentity =
+      ctx.db.orchestrator_config.id.find(0)?.orchestratorIdentity;
+    if (!orchestratorIdentity) {
+      throw new SenderError('matching service is not configured');
+    }
 
     // Candidates: other users' available personas only, deterministic order, capped.
     const others = [...ctx.db.persona.iter()]
@@ -475,6 +462,7 @@ export const startMatch = spacetimedb.reducer(
     const session = ctx.db.match_session.insert({
       id: 0n,
       owner: ctx.sender,
+      orchestratorIdentity,
       initiatorPersonaId: personaId,
       status: willRun ? 'matching' : 'complete',
       totalConversations: others.length,
@@ -495,6 +483,7 @@ export const startMatch = spacetimedb.reducer(
         partnerPersonaId: other.id,
         initiatorOwner: ctx.sender,  // denorm for visibility filter (no private table join)
         partnerOwner: other.owner,   // denorm for visibility filter (no private table join)
+        orchestratorIdentity,
         partnerDisplayName: other.displayName,
         status: 'pending',
         signalStrength: 0,
@@ -544,6 +533,9 @@ export const appendMessage = spacetimedb.reducer(
       id: 0n,
       conversationId,
       sessionId: convo.sessionId,
+      initiatorOwner: convo.initiatorOwner,
+      partnerOwner: convo.partnerOwner,
+      orchestratorIdentity: convo.orchestratorIdentity,
       senderPersonaId,
       senderName,
       content,
@@ -664,6 +656,9 @@ export const sendHumanMessage = spacetimedb.reducer(
       id: 0n,
       conversationId,
       sessionId: convo.sessionId,
+      initiatorOwner: convo.initiatorOwner,
+      partnerOwner: convo.partnerOwner,
+      orchestratorIdentity: convo.orchestratorIdentity,
       senderPersonaId: personaId,
       senderName: participant.displayName,
       content: trimmed,
