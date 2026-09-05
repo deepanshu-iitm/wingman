@@ -3,70 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Wingman — Match Me</title>
+    <title>Wingman</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400;1,6..72,500&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <header>
-      <h1>Wingman</h1>
-      <span id="conn-status" class="pill">connecting…</span>
-    </header>
+    <!-- Connection state pill (top-right). -->
+    <div id="conn-status" class="wg-conn" aria-live="polite">connecting…</div>
 
-    <main>
-      <!-- Persona setup -->
-      <section id="setup" class="card">
-        <h2>Your persona</h2>
-        <div class="voice-onboarding">
-          <p class="muted">
-            Tell Wingman about yourself, then review the generated profile before saving it.
-          </p>
-          <label class="consent-row" for="voice-consent">
-            <input id="voice-consent" type="checkbox" />
-            <span>
-              I consent to sending this recording for transcription. Wingman does not store the
-              raw recording.
-            </span>
-          </label>
-          <div class="voice-actions">
-            <button id="voice-record" type="button">🎙 Start recording</button>
-            <button id="voice-stop" type="button" disabled>Stop</button>
-          </div>
-          <p id="voice-status" class="voice-status" role="status" aria-live="polite">
-            Enter your name, then record for up to two minutes.
-          </p>
-        </div>
-
-        <p class="muted">Review and edit your persona before creating it.</p>
-        <form id="persona-form">
-          <input id="f-name" placeholder="Display name" required />
-          <input id="f-summary" placeholder="One-line summary" />
-          <input id="f-interests" placeholder="Interests (comma separated)" />
-          <input id="f-values" placeholder="Values (comma separated)" />
-          <input id="f-style" placeholder="Social style (e.g. warm, adventurous)" />
-          <button type="submit">Create persona</button>
-        </form>
-
-        <div id="mine">
-          <label for="active-persona">Match as:</label>
-          <select id="active-persona"></select>
-          <button id="match-btn" disabled>💘 Match Me</button>
-        </div>
-      </section>
-
-      <!-- Live matching board -->
-      <section id="board" class="card hidden">
-        <h2>Finding your people…</h2>
-        <p id="board-meta" class="muted"></p>
-        <div id="convos" class="convo-grid"></div>
-        <p id="others" class="muted"></p>
-      </section>
-
-      <!-- Final results -->
-      <section id="results" class="card hidden">
-        <h2>Your top matches</h2>
-        <div id="result-cards"></div>
-      </section>
-    </main>
+    <!-- Single mount point; main.ts renders the active screen here. -->
+    <div id="app"></div>
 
     <script type="module" src="./main.ts"></script>
   </body>
