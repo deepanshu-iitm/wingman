@@ -51,13 +51,13 @@ const persona = table(
     interests: t.array(t.string()),
     values: t.array(t.string()),
     socialStyle: t.string(),
+    status: t.string(), // 'available' | 'matching'
+    createdAt: t.timestamp(),
     // How this person actually talks, so their agent can speak in their voice.
     // Migration-safe defaults: old personas simply carry empty voice fields and
     // the turn generator falls back to socialStyle.
     voiceStyle: t.string().default(''), // LLM descriptor of tone/cadence/fillers
     speechSample: t.string().default(''), // short verbatim excerpt from the interview
-    status: t.string(), // 'available' | 'matching'
-    createdAt: t.timestamp(),
   }
 );
 

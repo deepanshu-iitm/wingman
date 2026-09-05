@@ -18,8 +18,8 @@ export default __t.row({
   interests: __t.array(__t.string()),
   values: __t.array(__t.string()),
   socialStyle: __t.string().name("social_style"),
-  voiceStyle: __t.string().name("voice_style"),
-  speechSample: __t.string().name("speech_sample"),
   status: __t.string(),
   createdAt: __t.timestamp().name("created_at"),
+  voiceStyle: __t.string().name("voice_style"),
+  speechSample: __t.string().name("speech_sample"),
 });
