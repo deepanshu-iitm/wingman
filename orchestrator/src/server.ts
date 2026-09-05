@@ -5,6 +5,7 @@ import {
 } from 'node:http';
 import { readFile } from 'node:fs/promises';
 
+import { extractPersona, PersonaExtractionError } from './persona.js';
 import { TranscriptionError, transcribeAudio } from './smallest.js';
 
 const port = Number(process.env.ORCHESTRATOR_PORT ?? 8787);
@@ -79,6 +80,37 @@ async function readAudio(request: IncomingMessage): Promise<Uint8Array> {
   return Buffer.concat(chunks);
 }
 
+async function readJson(
+  request: IncomingMessage
+): Promise<Record<string, unknown>> {
+  const contentType = request.headers['content-type']?.split(';', 1)[0]?.trim();
+  if (contentType !== 'application/json') {
+    throw new RequestError('Content type must be application/json', 415);
+  }
+
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.byteLength;
+    if (totalBytes > 16 * 1024) {
+      throw new RequestError('Request exceeds the 16 KB limit', 413);
+    }
+    chunks.push(buffer);
+  }
+
+  try {
+    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error();
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    throw new RequestError('Request body must be valid JSON', 400);
+  }
+}
+
 const server = createServer(async (request, response) => {
   if (request.method === 'OPTIONS') {
     response.writeHead(204, {
@@ -128,6 +160,37 @@ const server = createServer(async (request, response) => {
 
       console.error('Unexpected transcription error', error);
       sendJson(response, 500, { error: 'Unexpected transcription error' });
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && requestUrl.pathname === '/api/persona') {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      sendJson(response, 503, { error: 'Persona extraction is not configured' });
+      return;
+    }
+
+    try {
+      const body = await readJson(request);
+      const transcript =
+        typeof body.transcript === 'string' ? body.transcript : '';
+      const displayName =
+        typeof body.displayName === 'string' ? body.displayName : '';
+      const persona = await extractPersona(
+        transcript,
+        displayName,
+        apiKey
+      );
+      sendJson(response, 200, { persona });
+    } catch (error) {
+      if (error instanceof RequestError || error instanceof PersonaExtractionError) {
+        sendJson(response, error.status, { error: error.message });
+        return;
+      }
+
+      console.error('Unexpected persona extraction error', error);
+      sendJson(response, 500, { error: 'Unexpected persona extraction error' });
     }
     return;
   }
