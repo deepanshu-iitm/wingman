@@ -48,6 +48,8 @@ type PersonaDraft = {
   interests: string[];
   values: string[];
   socialStyle: string;
+  voiceStyle: string; // how they talk, so their agent speaks in their voice
+  speechSample: string; // short verbatim excerpt from the interview
 };
 
 type Conversation = ReturnType<DbConnection["db"]["conversation"]["iter"]> extends
@@ -960,6 +962,8 @@ function createPersonaFromDraft() {
     interests: draft.interests,
     values: draft.values,
     socialStyle: draft.socialStyle,
+    voiceStyle: draft.voiceStyle,
+    speechSample: draft.speechSample,
   });
 }
 
@@ -1229,6 +1233,8 @@ async function extractPersona(transcript: string) {
     interests: persona.interests ?? [],
     values: persona.values ?? [],
     socialStyle: persona.socialStyle ?? "",
+    voiceStyle: persona.voiceStyle ?? "",
+    speechSample: persona.speechSample ?? "",
   };
 }
 
