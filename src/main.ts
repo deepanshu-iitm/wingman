@@ -67,6 +67,27 @@ let watchForNewPersona = false;
 let expandedId: bigint | null = null;
 let matchSeen = false; // user has moved past the celebration into chat
 
+// `matchSeen` must survive reloads, or onApplied re-shows the celebration on
+// top of the chat the user already moved on to. Persist it per session id.
+const seenKey = (sessionId: bigint) => `wingman_match_seen_${sessionId}`;
+function markMatchSeen() {
+  matchSeen = true;
+  if (activeSessionId !== null) {
+    try {
+      localStorage.setItem(seenKey(activeSessionId), "1");
+    } catch {
+      /* storage unavailable — degrade to in-memory only */
+    }
+  }
+}
+function loadMatchSeen(sessionId: bigint): boolean {
+  try {
+    return localStorage.getItem(seenKey(sessionId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
 // signup
 const signup = { name: "", age: "", gender: "" };
 
@@ -612,8 +633,10 @@ function renderConversations(): string {
 
 function renderConvoCard(c: Conversation): string {
   const sig = signalState(c.signalStrength);
-  const msgs = messagesFor(c.id).slice(-4);
-  const total = c.turnCount || msgs.length;
+  const allMsgs = messagesFor(c.id);
+  const msgs = allMsgs.slice(-4); // only the last few are rendered in the card
+  const done = allMsgs.length; // full progress, independent of what's shown
+  const total = Math.max(c.turnCount, done);
   const controlledByMe =
     c.controlMode === "human" && c.humanPersonaId === activePersonaId;
 
@@ -623,7 +646,7 @@ function renderConvoCard(c: Conversation): string {
         <div class="wg-av av">${avatarSvg(characterFor(c.partnerPersonaId))}</div>
         <div class="wg-convo-name">
           <div class="n">${escapeHtml(c.partnerDisplayName)}</div>
-          <div class="t">turn ${msgs.length} of ${Math.max(total, msgs.length)}</div>
+          <div class="t">turn ${done} of ${total}</div>
         </div>
         <span class="wg-signal ${sig.cls}">${sig.label}</span>
         <button class="wg-expand" data-action="expand" data-id="${c.id}">⤢</button>
@@ -874,11 +897,11 @@ async function handleAction(action: string, el: HTMLElement) {
       view = "match";
       break;
     case "back-to-board":
-      matchSeen = true;
+      markMatchSeen();
       view = "conversations";
       break;
     case "to-chat":
-      matchSeen = true;
+      markMatchSeen();
       view = "chat";
       break;
     case "back-to-match":
@@ -1184,6 +1207,7 @@ const builder = DbConnection.builder()
         restoreState();
         // Land on the right screen after a reload.
         if (activeSessionId !== null) {
+          matchSeen = loadMatchSeen(activeSessionId);
           const results = sessionResults();
           if (results.length > 0) view = matchSeen ? "chat" : "match";
           else if (sessionConvos().length > 0) view = "conversations";
