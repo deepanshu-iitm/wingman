@@ -71,7 +71,13 @@ const match_session = table(
   }
 );
 
-/** One per pair; carries public live state and final rank. */
+/**
+ * One per pair; carries public live state and final rank.
+ * initiatorOwner / partnerOwner duplicate the persona.owner fields here so
+ * that the clientVisibilityFilter SQL can check ownership without joining
+ * the private persona table (visibility filter SQL may only reference public
+ * tables).
+ */
 const conversation = table(
   { name: 'conversation', public: true },
   {
@@ -79,6 +85,8 @@ const conversation = table(
     sessionId: t.u64().index('btree'),
     initiatorPersonaId: t.u64(),
     partnerPersonaId: t.u64(),
+    initiatorOwner: t.identity(), // denorm of persona.owner — for visibility filter
+    partnerOwner: t.identity(),   // denorm of persona.owner — for visibility filter
     partnerDisplayName: t.string(),
     status: t.string(), // 'pending' | 'active' | 'complete'
     signalStrength: t.u32(), // 0..100 — live directional indicator (NOT a %match)
@@ -164,6 +172,21 @@ const orchestrator_config = table(
   }
 );
 
+/**
+ * Public mirror of the orchestrator identity — contains only the identity,
+ * none of the admin secrets in orchestrator_config. Visibility filter SQL
+ * may only reference public tables, so this single-row table is what the
+ * filters use for the orchestrator exemption check.
+ * Kept in sync by registerOrchestrator.
+ */
+const orchestrator_identity = table(
+  { name: 'orchestrator_identity', public: true },
+  {
+    id: t.u8().primaryKey(), // always 0 — single row
+    identity: t.identity(),
+  }
+);
+
 /** Scheduled 3-minute watchdog. Private. */
 const deadline_timer = table(
   {
@@ -186,6 +209,7 @@ const spacetimedb = schema({
   match_result,
   conversation_archive,
   orchestrator_config,
+  orchestrator_identity,
   deadline_timer,
 });
 export default spacetimedb;
@@ -248,11 +272,14 @@ export const orchestratorPersona = spacetimedb.view(
 // a client receives ONLY the rows it is authorised to see, regardless of what
 // SQL query it subscribes with. "SELECT * + filter client-side" is not used.
 //
-// The orchestrator identity is always exempted so the matching service can
-// subscribe to all rows it needs to drive conversations.
+// All referenced tables are public: visibility filter SQL cannot safely query
+// private tables (see SpacetimeDB issue #2830). The orchestrator exemption
+// uses the public orchestrator_identity mirror instead of the private
+// orchestrator_config table. Conversation owner identity is denormalised into
+// the conversation row so we never need to join the private persona table.
 
 const ORCH_CHECK =
-  `EXISTS (SELECT 1 FROM orchestrator_config WHERE id = 0 AND orchestratorIdentity = :sender)`;
+  `EXISTS (SELECT 1 FROM orchestrator_identity WHERE identity = :sender)`;
 
 /** A client sees only their own match sessions (or the orchestrator sees all). */
 export const matchSessionVisibility = spacetimedb.clientVisibilityFilter.sql(`
@@ -262,19 +289,20 @@ export const matchSessionVisibility = spacetimedb.clientVisibilityFilter.sql(`
 `);
 
 /**
- * A client sees a conversation only if they own the initiator persona OR the
- * partner persona. The orchestrator sees all.
+ * A client sees a conversation only if they are the initiator or partner owner.
+ * Uses the denormalised initiatorOwner / partnerOwner columns so no private
+ * table join is required.
  */
 export const conversationVisibility = spacetimedb.clientVisibilityFilter.sql(`
-  SELECT c.* FROM conversation c
-  WHERE ${ORCH_CHECK}
-     OR EXISTS (SELECT 1 FROM persona p WHERE p.id = c.initiatorPersonaId AND p.owner = :sender)
-     OR EXISTS (SELECT 1 FROM persona p WHERE p.id = c.partnerPersonaId  AND p.owner = :sender)
+  SELECT * FROM conversation
+  WHERE initiatorOwner = :sender
+     OR partnerOwner = :sender
+     OR ${ORCH_CHECK}
 `);
 
 /**
  * A client sees a message only if they can see its parent conversation.
- * Derived from the same persona-ownership rule; the orchestrator sees all.
+ * Joins only the public conversation table.
  */
 export const messageVisibility = spacetimedb.clientVisibilityFilter.sql(`
   SELECT m.* FROM message m
@@ -282,10 +310,7 @@ export const messageVisibility = spacetimedb.clientVisibilityFilter.sql(`
      OR EXISTS (
        SELECT 1 FROM conversation c
        WHERE c.id = m.conversationId
-         AND (
-           EXISTS (SELECT 1 FROM persona p WHERE p.id = c.initiatorPersonaId AND p.owner = :sender)
-           OR EXISTS (SELECT 1 FROM persona p WHERE p.id = c.partnerPersonaId  AND p.owner = :sender)
-         )
+         AND (c.initiatorOwner = :sender OR c.partnerOwner = :sender)
      )
 `);
 
@@ -293,7 +318,10 @@ export const messageVisibility = spacetimedb.clientVisibilityFilter.sql(`
 export const matchResultVisibility = spacetimedb.clientVisibilityFilter.sql(`
   SELECT mr.* FROM match_result mr
   WHERE ${ORCH_CHECK}
-     OR EXISTS (SELECT 1 FROM match_session ms WHERE ms.id = mr.sessionId AND ms.owner = :sender)
+     OR EXISTS (
+       SELECT 1 FROM match_session ms
+       WHERE ms.id = mr.sessionId AND ms.owner = :sender
+     )
 `);
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
@@ -324,6 +352,14 @@ export const registerOrchestrator = spacetimedb.reducer(
       ...config,
       orchestratorIdentity,
     });
+    // Keep the public mirror in sync so visibility filter SQL can check the
+    // orchestrator identity without touching the private orchestrator_config table.
+    const existing = ctx.db.orchestrator_identity.id.find(0);
+    if (existing) {
+      ctx.db.orchestrator_identity.id.update({ id: 0, identity: orchestratorIdentity });
+    } else {
+      ctx.db.orchestrator_identity.insert({ id: 0, identity: orchestratorIdentity });
+    }
   }
 );
 
@@ -457,6 +493,8 @@ export const startMatch = spacetimedb.reducer(
         sessionId: session.id,
         initiatorPersonaId: personaId,
         partnerPersonaId: other.id,
+        initiatorOwner: ctx.sender,  // denorm for visibility filter (no private table join)
+        partnerOwner: other.owner,   // denorm for visibility filter (no private table join)
         partnerDisplayName: other.displayName,
         status: 'pending',
         signalStrength: 0,
