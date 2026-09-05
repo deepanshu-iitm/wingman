@@ -51,6 +51,11 @@ const persona = table(
     interests: t.array(t.string()),
     values: t.array(t.string()),
     socialStyle: t.string(),
+    // How this person actually talks, so their agent can speak in their voice.
+    // Migration-safe defaults: old personas simply carry empty voice fields and
+    // the turn generator falls back to socialStyle.
+    voiceStyle: t.string().default(''), // LLM descriptor of tone/cadence/fillers
+    speechSample: t.string().default(''), // short verbatim excerpt from the interview
     status: t.string(), // 'available' | 'matching'
     createdAt: t.timestamp(),
   }
@@ -361,19 +366,20 @@ function finalizeSessionInternal(ctx: Ctx, sessionId: bigint, timedOut: boolean)
 
   // A conversation is "settled" once it is complete OR a human has taken it
   // over. An unreleased human takeover never reaches completeConversation, so
-  // without counting it here it would block the normal finish forever.
+  // without counting it here it would block the normal finish forever. On a
+  // timeout we also settle any still-active agent conversation, so a slow chat
+  // is ranked with what it had instead of silently vanishing from the results.
   const settled = [...ctx.db.conversation.sessionId.filter(sessionId)].filter(
-    c => c.status === 'complete' || c.controlMode === 'human'
+    c => c.status === 'complete' || c.controlMode === 'human' || (timedOut && c.status === 'active')
   );
 
   // Normal path waits for every conversation to settle; the watchdog finalizes
   // whatever is available.
   if (!timedOut && settled.length < total) return;
 
-  // Human-held conversations never went through completeConversation, so they
-  // have no score and are still 'active'. Product decision: treat a human
-  // takeover as settled — complete it here and rank it by its signalStrength
-  // (there is no LLM verdict for a human-driven chat).
+  // Settle everything not already complete: human takeovers (never went through
+  // completeConversation) and, on timeout, still-running agent chats. Both lack
+  // an LLM verdict, so rank them by their live signalStrength.
   for (const c of settled) {
     if (c.status === 'complete') continue;
     const proxyScore = Math.max(0, Math.min(100, c.signalStrength));
@@ -383,10 +389,14 @@ function finalizeSessionInternal(ctx: Ctx, sessionId: bigint, timedOut: boolean)
     } else {
       ctx.db.conversation_score.insert({ conversationId: c.id, rawScore: proxyScore });
     }
+    const fallbackReason =
+      c.controlMode === 'human'
+        ? 'You took the wheel on this conversation.'
+        : 'Time ran out while they were still warming up.';
     ctx.db.conversation.id.update({
       ...c,
       status: 'complete',
-      reason: c.reason ?? 'You took the wheel on this conversation.',
+      reason: c.reason ?? fallbackReason,
       updatedAt: ctx.timestamp,
     });
   }
@@ -448,8 +458,10 @@ export const createPersona = spacetimedb.reducer(
     interests: t.array(t.string()),
     values: t.array(t.string()),
     socialStyle: t.string(),
+    voiceStyle: t.string(),
+    speechSample: t.string(),
   },
-  (ctx, { displayName, summary, interests, values, socialStyle }) => {
+  (ctx, { displayName, summary, interests, values, socialStyle, voiceStyle, speechSample }) => {
     if (displayName.trim().length === 0) throw new SenderError('displayName required');
     ctx.db.persona.insert({
       id: 0n,
@@ -459,6 +471,8 @@ export const createPersona = spacetimedb.reducer(
       interests,
       values,
       socialStyle,
+      voiceStyle,
+      speechSample,
       status: 'available',
       createdAt: ctx.timestamp,
     });

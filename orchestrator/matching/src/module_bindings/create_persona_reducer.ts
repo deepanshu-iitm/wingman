@@ -16,4 +16,6 @@ export default {
   interests: __t.array(__t.string()),
   values: __t.array(__t.string()),
   socialStyle: __t.string(),
+  voiceStyle: __t.string(),
+  speechSample: __t.string(),
 };
