@@ -393,6 +393,50 @@ export const startMatch = spacetimedb.reducer(
   }
 );
 
+// ── Reducers: human takeover ─────────────────────────────────────────────────────
+export const sendHumanMessage = spacetimedb.reducer(
+  { conversationId: t.u64(), content: t.string() },
+  (ctx, { conversationId, content }) => {
+    const convo = ctx.db.conversation.id.find(conversationId);
+    if (!convo) throw new SenderError('conversation not found');
+    if (convo.status === 'complete') throw new SenderError('conversation is already complete');
+
+    const initiator = ctx.db.persona.id.find(convo.initiatorPersonaId);
+    if (!initiator || !initiator.owner.equals(ctx.sender)) {
+      throw new SenderError('not your conversation');
+    }
+
+    const trimmed = content.trim();
+    if (trimmed.length === 0) throw new SenderError('content required');
+    if (trimmed.length > MAX_MESSAGE_LEN) throw new SenderError('message too long');
+
+    const seq = convo.turnCount;
+
+    // Idempotency: one message per (conversationId, seq).
+    const dup = [...ctx.db.message.conversationId.filter(conversationId)].some(m => m.seq === seq);
+    if (dup) return;
+
+    ctx.db.message.insert({
+      id: 0n,
+      conversationId,
+      sessionId: convo.sessionId,
+      senderPersonaId: initiator.id,
+      senderName: initiator.displayName,
+      content: trimmed,
+      source: 'human',
+      seq,
+      createdAt: ctx.timestamp,
+    });
+
+    ctx.db.conversation.id.update({
+      ...convo,
+      status: 'active',
+      turnCount: seq + 1,
+      updatedAt: ctx.timestamp,
+    });
+  }
+);
+
 // ── Reducers: orchestrator-called ────────────────────────────────────────────────
 // All of these are gated by requireOrchestrator(ctx): only the registered
 // orchestrator identity may forge messages, set scores, archive, or finalize.
