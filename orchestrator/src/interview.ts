@@ -75,6 +75,14 @@ const fallbackQuestions: Record<InterviewDimension, string> = {
     'What would make a new friendship feel genuinely worthwhile to you?',
 };
 
+const fallbackReplies = [
+  'Got it — that says a lot about what feels natural to you.',
+  'I hear you. That helps me understand your social rhythm.',
+  'That makes sense. I am getting a better feel for how you connect.',
+  'Thanks for being direct — that adds an important detail.',
+  'I understand. One last thing will round this out.',
+] as const;
+
 export function fallbackInterviewStep(
   coveredDimensions: InterviewDimension[],
 ): InterviewStep {
@@ -83,7 +91,10 @@ export function fallbackInterviewStep(
       (dimension) => !coveredDimensions.includes(dimension),
     ) ?? 'friendship_expectations';
   return {
-    reply: 'That gives me a clearer picture of what matters to you.',
+    reply:
+      fallbackReplies[
+        Math.min(coveredDimensions.length, fallbackReplies.length - 1)
+      ] ?? fallbackReplies[0],
     question: fallbackQuestions[nextDimension],
     coveredDimensions: [...new Set([...coveredDimensions, nextDimension])],
     readyToFinalize: false,
@@ -116,7 +127,7 @@ export async function generateInterviewStep(
       schemaName: 'adaptive_interview_step',
       schema: interviewStepSchema,
       fetchImpl,
-      maxCompletionTokens: 1_500,
+      maxCompletionTokens: 4_000,
       messages: [
         {
           role: 'system',
