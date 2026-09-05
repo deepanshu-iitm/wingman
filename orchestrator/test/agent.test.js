@@ -30,6 +30,7 @@ test('generateAgentTurn returns a bounded validated message', async () => {
       const request = JSON.parse(init?.body);
       assert.equal(request.model, 'gpt-5-nano');
       assert.equal(request.response_format.type, 'json_schema');
+      assert.equal(request.max_completion_tokens, 4_000);
       assert.equal(init?.headers.Authorization, 'Bearer test-key');
 
       return Response.json({

@@ -1,9 +1,11 @@
 import type { PersonaDraft } from './persona.js';
+import {
+  requestStructuredJson,
+  StructuredCompletionError,
+  type FetchLike,
+} from './openai.js';
 
-const CHAT_COMPLETIONS_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
 const maxHistoryMessages = 12;
-
-type Fetch = typeof fetch;
 
 export type ConversationMessage = {
   senderName: string;
@@ -13,14 +15,6 @@ export type ConversationMessage = {
 
 export type AgentTurn = {
   message: string;
-};
-
-type ChatCompletionResponse = {
-  choices?: Array<{
-    message?: {
-      content?: unknown;
-    };
-  }>;
 };
 
 const agentTurnSchema = {
@@ -61,7 +55,7 @@ export async function generateAgentTurn(
   otherDisplayName: string,
   history: ConversationMessage[],
   apiKey: string,
-  fetchImpl: Fetch = fetch
+  fetchImpl: FetchLike = fetch
 ): Promise<AgentTurn> {
   const otherName = otherDisplayName.trim().slice(0, 80);
   if (!otherName) {
@@ -69,14 +63,12 @@ export async function generateAgentTurn(
   }
 
   const safeHistory = validateHistory(history);
-  const response = await fetchImpl(CHAT_COMPLETIONS_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: process.env.OPENAI_MODEL ?? 'gpt-5-nano',
+  let parsed: { message?: unknown };
+  try {
+    parsed = await requestStructuredJson<{ message?: unknown }>({
+      apiKey,
+      schemaName: 'agent_turn',
+      schema: agentTurnSchema,
       messages: [
         {
           role: 'system',
@@ -99,36 +91,13 @@ export async function generateAgentTurn(
               : JSON.stringify(safeHistory),
         },
       ],
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'agent_turn',
-          strict: true,
-          schema: agentTurnSchema,
-        },
-      },
-      max_completion_tokens: 2_000,
-    }),
-    signal: AbortSignal.timeout(60_000),
-  });
-
-  if (!response.ok) {
-    throw new AgentTurnError(
-      `Agent turn generation failed with status ${response.status}`
-    );
-  }
-
-  const payload = (await response.json()) as ChatCompletionResponse;
-  const content = payload.choices?.[0]?.message?.content;
-  if (typeof content !== 'string' || content.length === 0) {
-    throw new AgentTurnError('Model returned no agent turn');
-  }
-
-  let parsed: { message?: unknown };
-  try {
-    parsed = JSON.parse(content) as { message?: unknown };
-  } catch {
-    throw new AgentTurnError('Model returned invalid agent turn JSON');
+      fetchImpl,
+    });
+  } catch (error) {
+    if (error instanceof StructuredCompletionError) {
+      throw new AgentTurnError(error.message, error.status);
+    }
+    throw error;
   }
 
   if (typeof parsed.message !== 'string' || parsed.message.trim().length === 0) {

@@ -44,6 +44,7 @@ test('generateVerdict returns a validated score and rationale', async () => {
     async (_input, init) => {
       const request = JSON.parse(init?.body);
       assert.equal(request.response_format.type, 'json_schema');
+      assert.equal(request.max_completion_tokens, 4_000);
       assert.equal(init?.headers.Authorization, 'Bearer test-key');
 
       return Response.json({
