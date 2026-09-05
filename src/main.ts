@@ -74,6 +74,15 @@ type PersonaDraft = {
   socialStyle: string;
 };
 
+function setVoiceStatus(
+  message: string,
+  state: "neutral" | "success" | "error" = "neutral",
+): void {
+  voiceStatus.textContent = message;
+  voiceStatus.classList.toggle("success", state === "success");
+  voiceStatus.classList.toggle("error", state === "error");
+}
+
 function releaseMicrophone(): void {
   clearTimeout(recordingTimer);
   recordingTimer = undefined;
@@ -98,7 +107,7 @@ async function readApiResponse<T>(response: Response, fallback: string): Promise
 
 async function buildPersonaFromRecording(audio: Blob): Promise<void> {
   recordButton.disabled = true;
-  voiceStatus.textContent = "Transcribing your recording…";
+  setVoiceStatus("Transcribing your recording…");
 
   try {
     const transcriptionResponse = await fetch(
@@ -114,7 +123,7 @@ async function buildPersonaFromRecording(audio: Blob): Promise<void> {
       "Transcription failed. Please try again.",
     );
 
-    voiceStatus.textContent = "Creating your persona draft…";
+    setVoiceStatus("Creating your persona draft…");
     const personaResponse = await fetch(`${ORCHESTRATOR_URL}/api/persona`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -133,13 +142,18 @@ async function buildPersonaFromRecording(audio: Blob): Promise<void> {
     interestsInput.value = persona.interests.join(", ");
     valuesInput.value = persona.values.join(", ");
     styleInput.value = persona.socialStyle;
-    voiceStatus.textContent = "Persona draft ready. Review it below, then create your persona.";
+    setVoiceStatus(
+      "Persona draft ready. Review it below, then create your persona.",
+      "success",
+    );
     summaryInput.focus();
   } catch (error) {
-    voiceStatus.textContent =
+    setVoiceStatus(
       error instanceof Error
         ? error.message
-        : "Voice onboarding failed. Please try again or enter your persona manually.";
+        : "Voice onboarding failed. Please try again or enter your persona manually.",
+      "error",
+    );
   } finally {
     recordButton.disabled = false;
   }
@@ -147,18 +161,20 @@ async function buildPersonaFromRecording(audio: Blob): Promise<void> {
 
 recordButton.addEventListener("click", async () => {
   if (!nameInput.value.trim()) {
-    voiceStatus.textContent = "Enter your display name before recording.";
+    setVoiceStatus("Enter your display name before recording.", "error");
     nameInput.focus();
     return;
   }
   if (!voiceConsent.checked) {
-    voiceStatus.textContent = "Please confirm consent before recording.";
+    setVoiceStatus("Please confirm consent before recording.", "error");
     voiceConsent.focus();
     return;
   }
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    voiceStatus.textContent =
-      "Voice recording is unavailable in this browser. Enter your persona manually below.";
+    setVoiceStatus(
+      "Voice recording is unavailable in this browser. Enter your persona manually below.",
+      "error",
+    );
     return;
   }
 
@@ -180,24 +196,31 @@ recordButton.addEventListener("click", async () => {
       if (event.data.size > 0) audioChunks.push(event.data);
     });
     recorder.addEventListener("stop", () => {
-      const audio = new Blob(audioChunks, {
-        type: recorder?.mimeType || "application/octet-stream",
-      });
+      const mimeType = recorder?.mimeType || "application/octet-stream";
+      const capturedChunks = audioChunks;
       releaseMicrophone();
+      if (capturedChunks.length === 0) {
+        recordButton.disabled = false;
+        setVoiceStatus("No audio was captured. Please try recording again.", "error");
+        return;
+      }
+      const audio = new Blob(capturedChunks, { type: mimeType });
       void buildPersonaFromRecording(audio);
     });
     recorder.start();
     recordButton.disabled = true;
     stopButton.disabled = false;
-    voiceStatus.textContent = "Listening… tell Wingman about yourself.";
+    setVoiceStatus("Listening… tell Wingman about yourself.");
     recordingTimer = setTimeout(() => {
       if (recorder?.state === "recording") recorder.stop();
     }, MAX_RECORDING_MS);
   } catch {
     releaseMicrophone();
     recordButton.disabled = false;
-    voiceStatus.textContent =
-      "Microphone access failed. Allow access and retry, or enter your persona manually.";
+    setVoiceStatus(
+      "Microphone access failed. Allow access and retry, or enter your persona manually.",
+      "error",
+    );
   }
 });
 
