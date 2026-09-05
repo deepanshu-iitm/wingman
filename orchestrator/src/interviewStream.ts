@@ -118,6 +118,8 @@ export function attachInterviewStream(
       let queuedBytes = 0;
       let processingFinal = false;
       let completed = false;
+      let finishRequested = false;
+      let finishTimer: ReturnType<typeof setTimeout> | undefined;
       let lastFinal = '';
       let coveredDimensions: InterviewDimension[] = [];
       const turns: InterviewTurn[] = [
@@ -188,13 +190,14 @@ export function attachInterviewStream(
           return;
         }
         lastFinal = answer;
+        clearTimeout(finishTimer);
         processingFinal = true;
         turns.push({ role: 'user', content: answer });
         sendJson(client, { type: 'transcript.final', text: answer });
         sendJson(client, { type: 'status', state: 'thinking' });
 
         const answerCount = turns.filter((turn) => turn.role === 'user').length;
-        if (answerCount >= MAX_INTERVIEW_ANSWERS) {
+        if (finishRequested || answerCount >= MAX_INTERVIEW_ANSWERS) {
           const closingReply =
             'Thanks — I have enough to build your friendship profile now.';
           turns.push({ role: 'assistant', content: closingReply });
@@ -309,6 +312,27 @@ export function attachInterviewStream(
               upstream.readyState === WebSocket.OPEN
             ) {
               upstream.send(JSON.stringify({ type: 'finalize' }));
+            } else if (
+              message.type === 'finish' &&
+              upstream.readyState === WebSocket.OPEN
+            ) {
+              finishRequested = true;
+              upstream.send(JSON.stringify({ type: 'finalize' }));
+              finishTimer = setTimeout(() => {
+                if (processingFinal || completed) return;
+                const answerCount = turns.filter(
+                  (turn) => turn.role === 'user',
+                ).length;
+                if (answerCount > 0) {
+                  void finishInterview();
+                } else {
+                  finishRequested = false;
+                  sendJson(client, {
+                    type: 'finish.rejected',
+                    error: 'Answer at least one question before finishing.',
+                  });
+                }
+              }, 2_500);
             }
           } catch {
             sendJson(client, { type: 'error', error: 'Invalid control message' });
@@ -337,6 +361,7 @@ export function attachInterviewStream(
       });
 
       client.on('close', () => {
+        clearTimeout(finishTimer);
         if (upstream.readyState === WebSocket.OPEN) {
           upstream.send(JSON.stringify({ type: 'finalize' }));
         }
