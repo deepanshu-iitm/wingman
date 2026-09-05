@@ -33,3 +33,7 @@ services:
         sync: false
       - key: ORCHESTRATOR_TOKEN
         sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: WELCOME_EMAIL_FROM
+        sync: false

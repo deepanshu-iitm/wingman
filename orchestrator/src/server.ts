@@ -10,11 +10,17 @@ import { fileURLToPath } from 'node:url';
 import { attachInterviewStream } from './interviewStream.js';
 import { extractPersona, PersonaExtractionError } from './persona.js';
 import { TranscriptionError, transcribeAudio } from './smallest.js';
+import {
+  sendWelcomeEmail,
+  validateEmail,
+  WelcomeEmailError,
+} from './welcome.js';
 
 // Managed hosts (Render, Railway, Fly, …) inject the bound port via PORT.
 const port = Number(process.env.PORT ?? process.env.ORCHESTRATOR_PORT ?? 8787);
 const clientOrigin = process.env.CLIENT_ORIGIN ?? 'http://localhost:5173';
 const maxAudioBytes = 20 * 1024 * 1024;
+const welcomedEmails = new Set<string>();
 const supportedAudioTypes = new Set([
   'application/octet-stream',
   'audio/flac',
@@ -195,6 +201,37 @@ const server = createServer(async (request, response) => {
 
       console.error('Unexpected persona extraction error', error);
       sendJson(response, 500, { error: 'Unexpected persona extraction error' });
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && requestUrl.pathname === '/api/welcome') {
+    const apiKey = process.env.RESEND_API_KEY;
+    const from = process.env.WELCOME_EMAIL_FROM;
+    if (!apiKey || !from) {
+      sendJson(response, 503, { error: 'Welcome email is not configured' });
+      return;
+    }
+
+    try {
+      const body = await readJson(request);
+      const email = validateEmail(body.email);
+      const displayName =
+        typeof body.displayName === 'string' ? body.displayName : '';
+
+      if (!welcomedEmails.has(email)) {
+        await sendWelcomeEmail(email, displayName, apiKey, from);
+        welcomedEmails.add(email);
+      }
+      sendJson(response, 202, { status: 'accepted' });
+    } catch (error) {
+      if (error instanceof RequestError || error instanceof WelcomeEmailError) {
+        sendJson(response, error.status, { error: error.message });
+        return;
+      }
+
+      console.error('Unexpected welcome email error', error);
+      sendJson(response, 500, { error: 'Unexpected welcome email error' });
     }
     return;
   }

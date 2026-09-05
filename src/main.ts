@@ -94,7 +94,9 @@ function loadMatchSeen(sessionId: bigint): boolean {
 }
 
 // signup
-const signup = { name: "", age: "", gender: "" };
+const signup = { name: "", email: "", age: "", gender: "" };
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+let welcomeEmailRequested = false;
 
 // interview
 let interviewMode: "voice" | "type" = "voice";
@@ -339,7 +341,8 @@ function render() {
 // ── 01 · Signup ──────────────────────────────────────────────────────────────
 function renderSignup(): string {
   const seed = signup.name || "you";
-  const ready = signup.name.trim().length > 0;
+  const ready =
+    signup.name.trim().length > 0 && EMAIL_PATTERN.test(signup.email.trim());
   return `
   <div class="wg-screen">
     ${brand}
@@ -353,6 +356,12 @@ function renderSignup(): string {
           <label class="wg-label" for="s-name">What should we call you?</label>
           <input class="wg-input" id="s-name" data-focus="s-name" data-field="name"
             placeholder="Your name" value="${escapeHtml(signup.name)}" maxlength="60" autocomplete="off" />
+        </div>
+        <div class="wg-field">
+          <label class="wg-label" for="s-email">Where should we send your welcome?</label>
+          <input class="wg-input" id="s-email" data-focus="s-email" data-field="email"
+            type="email" inputmode="email" placeholder="you@example.com"
+            value="${escapeHtml(signup.email)}" maxlength="254" autocomplete="email" />
         </div>
         <div class="wg-field">
           <label class="wg-label">Age</label>
@@ -933,7 +942,7 @@ async function handleAction(action: string, el: HTMLElement) {
       void buildPersonaFromText(typeDraft);
       return;
     case "create-persona":
-      createPersonaFromDraft();
+      await createPersonaFromDraft();
       break;
     case "start-match":
       startMatch();
@@ -980,7 +989,7 @@ async function handleAction(action: string, el: HTMLElement) {
   scheduleRender();
 }
 
-function createPersonaFromDraft() {
+async function createPersonaFromDraft() {
   if (!conn || !draft) return;
   const summary = signup.age || signup.gender
     ? `${draft.summary} (${[signup.age && `${signup.age}`, signup.gender]
@@ -988,7 +997,7 @@ function createPersonaFromDraft() {
         .join(", ")}.)`
     : draft.summary;
   watchForNewPersona = true;
-  conn.reducers.createPersona({
+  await conn.reducers.createPersona({
     displayName: draft.displayName || signup.name.trim(),
     summary,
     interests: draft.interests,
@@ -997,6 +1006,24 @@ function createPersonaFromDraft() {
     voiceStyle: draft.voiceStyle,
     speechSample: draft.speechSample,
   });
+
+  if (!welcomeEmailRequested) {
+    welcomeEmailRequested = true;
+    try {
+      const response = await fetch(`${ORCHESTRATOR_URL}/api/welcome`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: signup.email.trim(),
+          displayName: signup.name.trim(),
+        }),
+      });
+      if (!response.ok) throw new Error(`Welcome email failed (${response.status})`);
+    } catch (error) {
+      welcomeEmailRequested = false;
+      console.warn("Welcome email could not be sent.", error);
+    }
+  }
 }
 
 function startMatch() {
@@ -1092,6 +1119,8 @@ app.addEventListener("input", (e) => {
     // Live-update the aside name/avatar without stealing caret.
     const h = app.querySelector(".wg-signup-aside .wg-h2");
     if (h) h.firstChild!.textContent = t.value || "Hey there";
+  } else if (t.dataset.field === "email") {
+    signup.email = t.value;
   } else if (t.dataset.field === "age") {
     signup.age = t.value.replace(/\D/g, "");
   } else if (
