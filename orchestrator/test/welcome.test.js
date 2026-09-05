@@ -7,20 +7,25 @@ import {
   WelcomeEmailError,
 } from '../dist/welcome.js';
 
-test('sendWelcomeEmail sends a branded message without exposing the API key', async () => {
+test('sendWelcomeEmail sends a branded message through Brevo', async () => {
   await sendWelcomeEmail(
     'Friend@Example.com',
     '<Deepanshu>',
     'test-key',
-    'Wingman <hello@example.com>',
+    'hello@example.com',
     async (_input, init) => {
-      assert.equal(init?.headers.Authorization, 'Bearer test-key');
+      assert.equal(init?.headers['api-key'], 'test-key');
       const body = JSON.parse(init?.body);
-      assert.deepEqual(body.to, ['friend@example.com']);
-      assert.equal(body.from, 'Wingman <hello@example.com>');
-      assert.match(body.text, /Hey <Deepanshu>/);
-      assert.match(body.html, /Hey &lt;Deepanshu&gt;/);
-      return Response.json({ id: 'email_123' });
+      assert.deepEqual(body.to, [
+        { email: 'friend@example.com', name: '<Deepanshu>' },
+      ]);
+      assert.deepEqual(body.sender, {
+        name: 'Wingman',
+        email: 'hello@example.com',
+      });
+      assert.match(body.textContent, /Hey <Deepanshu>/);
+      assert.match(body.htmlContent, /Hey &lt;Deepanshu&gt;/);
+      return Response.json({ messageId: 'email_123' });
     },
   );
 });

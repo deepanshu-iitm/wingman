@@ -1,6 +1,6 @@
 import type { FetchLike } from './openai.js';
 
-const RESEND_EMAIL_ENDPOINT = 'https://api.resend.com/emails';
+const BREVO_EMAIL_ENDPOINT = 'https://api.brevo.com/v3/smtp/email';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export class WelcomeEmailError extends Error {
@@ -34,20 +34,23 @@ export async function sendWelcomeEmail(
   const recipient = validateEmail(email);
   const name = displayName.trim().slice(0, 80) || 'there';
 
-  const response = await fetchImpl(RESEND_EMAIL_ENDPOINT, {
+  const response = await fetchImpl(BREVO_EMAIL_ENDPOINT, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      'api-key': apiKey,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from,
-      to: [recipient],
+      sender: {
+        name: 'Wingman',
+        email: from,
+      },
+      to: [{ email: recipient, name }],
       subject: 'Your Wingman is ready',
-      text:
+      textContent:
         `Hey ${name}, your Wingman profile is ready. ` +
         'Your agent can now meet people and find the conversations worth joining.',
-      html:
+      htmlContent:
         `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#16130e">` +
         `<h1 style="font-size:28px">Your Wingman is ready.</h1>` +
         `<p>Hey ${escapeHtml(name)}, your profile is live.</p>` +

@@ -206,7 +206,7 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === 'POST' && requestUrl.pathname === '/api/welcome') {
-    const apiKey = process.env.RESEND_API_KEY;
+    const apiKey = process.env.BREVO_API_KEY;
     const from = process.env.WELCOME_EMAIL_FROM;
     if (!apiKey || !from) {
       sendJson(response, 503, { error: 'Welcome email is not configured' });
