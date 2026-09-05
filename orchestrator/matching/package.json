@@ -1,0 +1,19 @@
+{
+  "name": "@wingman/matching-orchestrator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Match-Me matching orchestrator: generates agent conversations and writes them back to SpacetimeDB via reducers. Sibling to the voice/persona orchestrator, kept in its own folder to avoid config collisions.",
+  "scripts": {
+    "start": "npx tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "spacetimedb": "2.10.*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "~5.6.2"
+  }
+}

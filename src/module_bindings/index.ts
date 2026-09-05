@@ -34,53 +34,177 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
-import AddReducer from "./add_reducer";
-import SayHelloReducer from "./say_hello_reducer";
+import AppendMessageReducer from "./append_message_reducer";
+import ArchiveConversationReducer from "./archive_conversation_reducer";
+import CompleteConversationReducer from "./complete_conversation_reducer";
+import CreatePersonaReducer from "./create_persona_reducer";
+import FinalizeSessionReducer from "./finalize_session_reducer";
+import StartMatchReducer from "./start_match_reducer";
+import UpdateSignalReducer from "./update_signal_reducer";
 
 // Import all procedure arg schemas
 
 // Import all table schema definitions
-import PersonRow from "./person_table";
+import ConversationRow from "./conversation_table";
+import MatchResultRow from "./match_result_table";
+import MatchSessionRow from "./match_session_table";
+import MessageRow from "./message_table";
+import PersonaRow from "./persona_table";
 
 /** Type-only namespace exports for generated type groups. */
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
-  person: __table({
-    name: 'person',
+  conversation: __table({
+    name: 'conversation',
     indexes: [
+      { accessor: 'id', name: 'conversation_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'sessionId', name: 'conversation_session_id_idx_btree', algorithm: 'btree', columns: [
+        'sessionId',
+      ] },
     ],
     constraints: [
+      { name: 'conversation_id_key', constraint: 'unique', columns: ['id'] },
     ],
-  }, PersonRow),
+  }, ConversationRow),
+  matchResult: __table({
+    name: 'match_result',
+    indexes: [
+      { accessor: 'id', name: 'match_result_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'sessionId', name: 'match_result_session_id_idx_btree', algorithm: 'btree', columns: [
+        'sessionId',
+      ] },
+    ],
+    constraints: [
+      { name: 'match_result_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, MatchResultRow),
+  matchSession: __table({
+    name: 'match_session',
+    indexes: [
+      { accessor: 'id', name: 'match_session_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'match_session_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, MatchSessionRow),
+  message: __table({
+    name: 'message',
+    indexes: [
+      { accessor: 'conversationId', name: 'message_conversation_id_idx_btree', algorithm: 'btree', columns: [
+        'conversationId',
+      ] },
+      { accessor: 'id', name: 'message_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'sessionId', name: 'message_session_id_idx_btree', algorithm: 'btree', columns: [
+        'sessionId',
+      ] },
+    ],
+    constraints: [
+      { name: 'message_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, MessageRow),
+  persona: __table({
+    name: 'persona',
+    indexes: [
+      { accessor: 'id', name: 'persona_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'owner', name: 'persona_owner_idx_btree', algorithm: 'btree', columns: [
+        'owner',
+      ] },
+    ],
+    constraints: [
+      { name: 'persona_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, PersonaRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
-  __reducerSchema("add", AddReducer),
-  __reducerSchema("say_hello", SayHelloReducer),
+  __reducerSchema("append_message", AppendMessageReducer),
+  __reducerSchema("archive_conversation", ArchiveConversationReducer),
+  __reducerSchema("complete_conversation", CompleteConversationReducer),
+  __reducerSchema("create_persona", CreatePersonaReducer),
+  __reducerSchema("finalize_session", FinalizeSessionReducer),
+  __reducerSchema("start_match", StartMatchReducer),
+  __reducerSchema("update_signal", UpdateSignalReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
 const proceduresSchema = __procedures(
 );
 
+type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "tables"> & {
+  tables: typeof tablesSchema.schemaType.tables & {
+    /** @deprecated Use `matchResult` instead. This alias will be removed in the next major version. */
+    readonly "match_result": Omit<typeof tablesSchema.schemaType.tables["matchResult"], "accessorName"> & { readonly accessorName: "match_result" };
+    /** @deprecated Use `matchSession` instead. This alias will be removed in the next major version. */
+    readonly "match_session": Omit<typeof tablesSchema.schemaType.tables["matchSession"], "accessorName"> & { readonly accessorName: "match_session" };
+  };
+};
+
 /** The remote SpacetimeDB module schema, both runtime and type information. */
 const REMOTE_MODULE = {
   versionInfo: {
     cliVersion: "2.10.0" as const,
   },
-  tables: tablesSchema.schemaType.tables,
+  tables: tablesSchema.schemaType.tables as __SchemaWithTableAccessorAliases["tables"],
   reducers: reducersSchema.reducersType.reducers,
   ...proceduresSchema,
 } satisfies __RemoteModule<
-  typeof tablesSchema.schemaType,
+  __SchemaWithTableAccessorAliases,
   typeof reducersSchema.reducersType,
   typeof proceduresSchema
 >;
 
+const tableAccessorAliases = {
+  "match_result": "matchResult",
+  "match_session": "matchSession",
+} as const;
+
+function __withTableAccessorAliases<T extends object>(target: T, freeze = false): T {
+  const out = Object.create(Object.getPrototypeOf(target)) as T & Record<string, unknown>;
+  Object.defineProperties(out, Object.getOwnPropertyDescriptors(target));
+  for (const [deprecatedAccessor, targetAccessor] of Object.entries(tableAccessorAliases)) {
+    if (deprecatedAccessor in out) {
+      continue;
+    }
+    Object.defineProperty(out, deprecatedAccessor, {
+      enumerable: true,
+      configurable: false,
+      get: () => out[targetAccessor],
+    });
+  }
+  return freeze ? Object.freeze(out) : out;
+}
+
+type __DbViewBase = __DbConnectionImpl<typeof REMOTE_MODULE>["db"];
+export type DbView = __DbViewBase & {
+  /** @deprecated Use `matchResult` instead. This alias will be removed in the next major version. */
+  readonly "match_result": __DbViewBase["matchResult"];
+  /** @deprecated Use `matchSession` instead. This alias will be removed in the next major version. */
+  readonly "match_session": __DbViewBase["matchSession"];
+};
+
+type __TablesBase = __QueryBuilder<typeof tablesSchema.schemaType>;
+export type Tables = __TablesBase & {
+  /** @deprecated Use `matchResult` instead. This alias will be removed in the next major version. */
+  readonly "match_result": __TablesBase["matchResult"];
+  /** @deprecated Use `matchSession` instead. This alias will be removed in the next major version. */
+  readonly "match_session": __TablesBase["matchSession"];
+};
+
 /** The tables available in this remote SpacetimeDB module. Each table reference doubles as a query builder. */
-export const tables: __QueryBuilder<typeof tablesSchema.schemaType> = __makeQueryBuilder(tablesSchema.schemaType);
+const tablesBase: __TablesBase = __makeQueryBuilder(tablesSchema.schemaType);
+export const tables: Tables = __withTableAccessorAliases(tablesBase, true) as Tables;
 
 /** The reducers available in this remote SpacetimeDB module. */
 export const reducers = __convertToAccessorMap(reducersSchema.reducersType.reducers);
@@ -89,13 +213,13 @@ export const reducers = __convertToAccessorMap(reducersSchema.reducersType.reduc
 export const procedures = __convertToAccessorMap(proceduresSchema.procedures);
 
 /** The context type returned in callbacks for all possible events. */
-export type EventContext = __EventContextInterface<typeof REMOTE_MODULE>;
+export type EventContext = Omit<__EventContextInterface<typeof REMOTE_MODULE>, "db"> & { db: DbView };
 /** The context type returned in callbacks for reducer events. */
-export type ReducerEventContext = __ReducerEventContextInterface<typeof REMOTE_MODULE>;
+export type ReducerEventContext = Omit<__ReducerEventContextInterface<typeof REMOTE_MODULE>, "db"> & { db: DbView };
 /** The context type returned in callbacks for subscription events. */
-export type SubscriptionEventContext = __SubscriptionEventContextInterface<typeof REMOTE_MODULE>;
+export type SubscriptionEventContext = Omit<__SubscriptionEventContextInterface<typeof REMOTE_MODULE>, "db"> & { db: DbView };
 /** The context type returned in callbacks for error events. */
-export type ErrorContext = __ErrorContextInterface<typeof REMOTE_MODULE>;
+export type ErrorContext = Omit<__ErrorContextInterface<typeof REMOTE_MODULE>, "db"> & { db: DbView };
 /** The subscription handle type to manage active subscriptions created from a {@link SubscriptionBuilder}. */
 export type SubscriptionHandle = __SubscriptionHandleImpl<typeof REMOTE_MODULE>;
 
@@ -107,6 +231,13 @@ export class DbConnectionBuilder extends __DbConnectionBuilder<DbConnection> {}
 
 /** The typed database connection to manage connections to the remote SpacetimeDB instance. This class has type information specific to the generated module. */
 export class DbConnection extends __DbConnectionImpl<typeof REMOTE_MODULE> {
+  declare db: DbView;
+
+  constructor(config: __DbConnectionConfig<typeof REMOTE_MODULE>) {
+    super(config);
+    this.db = __withTableAccessorAliases(this.db) as DbView;
+  }
+
   /** Creates a new {@link DbConnectionBuilder} to configure and connect to the remote SpacetimeDB instance. */
   static builder = (): DbConnectionBuilder => {
     return new DbConnectionBuilder(REMOTE_MODULE, (config: __DbConnectionConfig<typeof REMOTE_MODULE>) => new DbConnection(config));

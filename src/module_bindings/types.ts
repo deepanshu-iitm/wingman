@@ -10,8 +10,94 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export const Person = __t.object("Person", {
-  name: __t.string(),
+export const Conversation = __t.object("Conversation", {
+  id: __t.u64(),
+  sessionId: __t.u64(),
+  initiatorPersonaId: __t.u64(),
+  partnerPersonaId: __t.u64(),
+  partnerDisplayName: __t.string(),
+  status: __t.string(),
+  signalStrength: __t.u32(),
+  turnCount: __t.u32(),
+  rawScore: __t.option(__t.u32()),
+  displayScore: __t.option(__t.u32()),
+  reason: __t.option(__t.string()),
+  rank: __t.option(__t.u32()),
+  createdAt: __t.timestamp(),
+  updatedAt: __t.timestamp(),
 });
-export type Person = __Infer<typeof Person>;
+export type Conversation = __Infer<typeof Conversation>;
+
+export const ConversationArchive = __t.object("ConversationArchive", {
+  id: __t.u64(),
+  sessionId: __t.u64(),
+  initiatorPersonaId: __t.u64(),
+  partnerPersonaId: __t.u64(),
+  personaSnapshot: __t.string(),
+  transcript: __t.string(),
+  rawScore: __t.u32(),
+  signalStrength: __t.u32(),
+  reason: __t.string(),
+  model: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type ConversationArchive = __Infer<typeof ConversationArchive>;
+
+export const DeadlineTimer = __t.object("DeadlineTimer", {
+  scheduledId: __t.u64(),
+  scheduledAt: __t.scheduleAt(),
+  sessionId: __t.u64(),
+});
+export type DeadlineTimer = __Infer<typeof DeadlineTimer>;
+
+export const MatchResult = __t.object("MatchResult", {
+  id: __t.u64(),
+  sessionId: __t.u64(),
+  partnerPersonaId: __t.u64(),
+  partnerDisplayName: __t.string(),
+  rank: __t.u32(),
+  displayScore: __t.u32(),
+  reason: __t.string(),
+  conversationId: __t.u64(),
+  createdAt: __t.timestamp(),
+});
+export type MatchResult = __Infer<typeof MatchResult>;
+
+export const MatchSession = __t.object("MatchSession", {
+  id: __t.u64(),
+  owner: __t.identity(),
+  initiatorPersonaId: __t.u64(),
+  status: __t.string(),
+  totalConversations: __t.u32(),
+  startedAt: __t.timestamp(),
+  deadlineMicros: __t.u64(),
+  createdAt: __t.timestamp(),
+});
+export type MatchSession = __Infer<typeof MatchSession>;
+
+export const Message = __t.object("Message", {
+  id: __t.u64(),
+  conversationId: __t.u64(),
+  sessionId: __t.u64(),
+  senderPersonaId: __t.u64(),
+  senderName: __t.string(),
+  content: __t.string(),
+  source: __t.string(),
+  seq: __t.u32(),
+  createdAt: __t.timestamp(),
+});
+export type Message = __Infer<typeof Message>;
+
+export const Persona = __t.object("Persona", {
+  id: __t.u64(),
+  owner: __t.identity(),
+  displayName: __t.string(),
+  summary: __t.string(),
+  interests: __t.array(__t.string()),
+  values: __t.array(__t.string()),
+  socialStyle: __t.string(),
+  status: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type Persona = __Infer<typeof Persona>;
 
