@@ -12,14 +12,15 @@ test('synthesizeSpeech returns browser-playable audio without exposing the key',
     'What matters most in a friendship?',
     'test-key',
     {
-      voiceId: 'sunidhi',
+      voiceId: 'meher',
       fetchImpl: async (_input, init) => {
         assert.equal(init?.headers.Authorization, 'Bearer test-key');
+        assert.equal(init?.headers.Accept, 'audio/wav');
         const body = JSON.parse(init?.body);
         assert.deepEqual(body, {
           text: 'What matters most in a friendship?',
-          voice_id: 'sunidhi',
-          model: 'lightning_v3.1',
+          voice_id: 'meher',
+          model: 'lightning_v3.1_pro',
           sample_rate: 24_000,
           speed: 1,
           language: 'en',

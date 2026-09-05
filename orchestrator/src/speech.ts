@@ -22,7 +22,7 @@ export async function synthesizeSpeech(
   text: string,
   apiKey: string,
   {
-    voiceId = process.env.SMALLEST_TTS_VOICE ?? 'sunidhi',
+    voiceId = process.env.SMALLEST_TTS_VOICE ?? 'meher',
     language = 'en',
     fetchImpl = fetch,
   }: {
@@ -41,11 +41,12 @@ export async function synthesizeSpeech(
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
+      Accept: 'audio/wav',
     },
     body: JSON.stringify({
       text: safeText,
       voice_id: voiceId,
-      model: 'lightning_v3.1',
+      model: 'lightning_v3.1_pro',
       sample_rate: 24_000,
       speed: 1,
       language,
