@@ -3,7 +3,9 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http';
+import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 import { attachInterviewStream } from './interviewStream.js';
 import { extractPersona, PersonaExtractionError } from './persona.js';
@@ -204,4 +206,24 @@ attachInterviewStream(server, { clientOrigin });
 
 server.listen(port, () => {
   console.log(`Wingman orchestrator listening on http://localhost:${port}`);
+
+  if (process.env.RUN_MATCHING_WORKER === 'true') {
+    const matchingDirectory = fileURLToPath(new URL('../matching/', import.meta.url));
+    const worker = spawn(
+      process.execPath,
+      ['--import', 'tsx', 'src/index.ts'],
+      {
+        cwd: matchingDirectory,
+        env: process.env,
+        stdio: 'inherit',
+      }
+    );
+
+    worker.on('exit', (code, signal) => {
+      console.error(
+        `Matching worker exited (${signal ?? `code ${code ?? 1}`}); restarting the service.`
+      );
+      process.exit(code ?? 1);
+    });
+  }
 });

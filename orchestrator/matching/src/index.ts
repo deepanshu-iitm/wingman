@@ -59,6 +59,9 @@ async function runPool<T>(items: T[], limit: number, worker: (item: T) => Promis
 }
 
 function loadToken(): string | undefined {
+  const environmentToken = process.env.ORCHESTRATOR_TOKEN?.trim();
+  if (environmentToken) return environmentToken;
+
   try {
     const tok = fs.readFileSync(CONFIG.TOKEN_FILE, 'utf8').trim();
     return tok.length > 0 ? tok : undefined;
