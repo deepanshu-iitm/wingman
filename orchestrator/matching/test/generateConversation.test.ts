@@ -39,8 +39,8 @@ test('placeholder verdict incorporates completed conversation evidence', async (
   try {
     const empty = await scoreConversation(alex, sam, []);
     const history: Turn[] = [
-      { senderPersonaId: alex.id, senderName: alex.displayName, content: 'I love live music.' },
-      { senderPersonaId: sam.id, senderName: sam.displayName, content: 'Me too.' },
+      { senderPersonaId: alex.id, senderName: alex.displayName, content: 'I love live music.', source: 'agent' },
+      { senderPersonaId: sam.id, senderName: sam.displayName, content: 'Me too.', source: 'agent' },
     ];
     const conversational = await scoreConversation(alex, sam, history);
     assert.ok(conversational.rawScore > empty.rawScore);
@@ -55,7 +55,7 @@ test('LLM verdict receives the transcript and validates structured output', asyn
   process.env.OPENAI_API_KEY = 'test-key';
   try {
     const history: Turn[] = [
-      { senderPersonaId: alex.id, senderName: alex.displayName, content: 'Hello Sam' },
+      { senderPersonaId: alex.id, senderName: alex.displayName, content: 'Hello Sam', source: 'agent' },
     ];
     const result = await scoreConversation(alex, sam, history, async (_url, init) => {
       const request = JSON.parse(String(init?.body)) as {

@@ -175,6 +175,7 @@ async function runConversation(conn: DbConnection, sessionId: bigint, conversati
     senderPersonaId: m.senderPersonaId,
     senderName: m.senderName,
     content: m.content,
+    source: m.source === 'human' ? 'human' : 'agent',
   }));
   const nextSeq = existing.reduce((max, message) => Math.max(max, message.seq + 1), 0);
 
