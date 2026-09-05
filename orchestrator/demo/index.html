@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wingman Voice Onboarding</title>
+    <style>
+      :root {
+        color: #e8eef2;
+        background: #0b1215;
+        font-family: Inter, system-ui, sans-serif;
+      }
+      body {
+        display: grid;
+        min-height: 100vh;
+        margin: 0;
+        place-items: center;
+      }
+      main {
+        width: min(680px, calc(100% - 40px));
+      }
+      button,
+      textarea {
+        box-sizing: border-box;
+        width: 100%;
+        margin-top: 12px;
+        border: 1px solid #36545e;
+        border-radius: 10px;
+        padding: 12px;
+        color: inherit;
+        background: #132127;
+      }
+      button {
+        cursor: pointer;
+        font-weight: 700;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+      }
+      textarea {
+        min-height: 150px;
+        resize: vertical;
+      }
+      label {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+      }
+      label input {
+        margin-top: 3px;
+      }
+      #status {
+        min-height: 24px;
+        color: #8dd9c7;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p>VOICE ONBOARDING SPIKE</p>
+      <h1>Tell Wingman about yourself</h1>
+      <p>
+        Speak naturally for up to two minutes. You can review and edit the
+        transcript before it becomes part of your persona.
+      </p>
+
+      <label>
+        <input id="consent" type="checkbox" />
+        <span>
+          I consent to sending this recording for transcription. Wingman does
+          not store the raw recording.
+        </span>
+      </label>
+
+      <button id="record" type="button">Start recording</button>
+      <button id="stop" type="button" disabled>Stop and transcribe</button>
+      <p id="status" role="status">Ready.</p>
+
+      <label for="transcript">Transcript or text fallback</label>
+      <textarea
+        id="transcript"
+        placeholder="Your transcript will appear here. You can also type instead."
+      ></textarea>
+    </main>
+
+    <script type="module">
+      const consent = document.querySelector('#consent');
+      const recordButton = document.querySelector('#record');
+      const stopButton = document.querySelector('#stop');
+      const status = document.querySelector('#status');
+      const transcript = document.querySelector('#transcript');
+
+      let recorder;
+      let stream;
+      let chunks = [];
+      let stopTimer;
+
+      const supportedType = window.MediaRecorder
+        ? [
+            'audio/webm;codecs=opus',
+            'audio/webm',
+            'audio/ogg;codecs=opus',
+            'audio/mp4',
+          ].find((type) => MediaRecorder.isTypeSupported(type))
+        : undefined;
+
+      function resetRecording() {
+        clearTimeout(stopTimer);
+        stream?.getTracks().forEach((track) => track.stop());
+        stream = undefined;
+        recorder = undefined;
+        recordButton.disabled = false;
+        stopButton.disabled = true;
+      }
+
+      async function transcribe(blob) {
+        status.textContent = 'Transcribing…';
+
+        const response = await fetch('/api/transcribe?language=en', {
+          method: 'POST',
+          headers: { 'Content-Type': blob.type || 'application/octet-stream' },
+          body: blob,
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || 'Transcription failed');
+        }
+
+        transcript.value = result.transcript;
+        status.textContent = 'Transcript ready. Review or edit it before continuing.';
+      }
+
+      recordButton.addEventListener('click', async () => {
+        if (!consent.checked) {
+          status.textContent = 'Please confirm consent before recording.';
+          return;
+        }
+
+        if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+          status.textContent =
+            'Recording is not supported here. Please type your response below.';
+          return;
+        }
+
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          chunks = [];
+          recorder = new MediaRecorder(
+            stream,
+            supportedType ? { mimeType: supportedType } : undefined
+          );
+          recorder.addEventListener('dataavailable', (event) => {
+            if (event.data.size > 0) chunks.push(event.data);
+          });
+          recorder.addEventListener('stop', async () => {
+            const blob = new Blob(chunks, {
+              type: recorder?.mimeType || 'application/octet-stream',
+            });
+            resetRecording();
+
+            try {
+              await transcribe(blob);
+            } catch (error) {
+              status.textContent =
+                error instanceof Error
+                  ? error.message
+                  : 'Transcription failed. Please type your response below.';
+            }
+          });
+
+          recorder.start();
+          recordButton.disabled = true;
+          stopButton.disabled = false;
+          status.textContent = 'Listening…';
+          stopTimer = setTimeout(() => recorder?.stop(), 120_000);
+        } catch {
+          resetRecording();
+          status.textContent =
+            'Microphone access failed. Please type your response below.';
+        }
+      });
+
+      stopButton.addEventListener('click', () => {
+        if (recorder?.state === 'recording') recorder.stop();
+      });
+    </script>
+  </body>
+</html>

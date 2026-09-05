@@ -3,6 +3,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http';
+import { readFile } from 'node:fs/promises';
 
 import { TranscriptionError, transcribeAudio } from './smallest.js';
 
@@ -45,6 +46,18 @@ function sendJson(
   response.end(JSON.stringify(body));
 }
 
+async function sendDemo(response: ServerResponse): Promise<void> {
+  try {
+    const html = await readFile(new URL('../demo/index.html', import.meta.url));
+    response.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+    });
+    response.end(html);
+  } catch {
+    sendJson(response, 500, { error: 'Voice demo is unavailable' });
+  }
+}
+
 async function readAudio(request: IncomingMessage): Promise<Uint8Array> {
   const contentType = request.headers['content-type']?.split(';', 1)[0]?.trim();
   if (!contentType || !supportedAudioTypes.has(contentType)) {
@@ -82,6 +95,11 @@ const server = createServer(async (request, response) => {
 
   if (request.method === 'GET' && requestUrl.pathname === '/health') {
     sendJson(response, 200, { status: 'ok', service: 'wingman-orchestrator' });
+    return;
+  }
+
+  if (request.method === 'GET' && requestUrl.pathname === '/demo') {
+    await sendDemo(response);
     return;
   }
 
