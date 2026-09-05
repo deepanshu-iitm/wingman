@@ -242,6 +242,60 @@ export const orchestratorPersona = spacetimedb.view(
   }
 );
 
+// ── Row-level visibility filters ─────────────────────────────────────────────
+//
+// These enforce the conversation privacy guarantee at the SpacetimeDB layer:
+// a client receives ONLY the rows it is authorised to see, regardless of what
+// SQL query it subscribes with. "SELECT * + filter client-side" is not used.
+//
+// The orchestrator identity is always exempted so the matching service can
+// subscribe to all rows it needs to drive conversations.
+
+const ORCH_CHECK =
+  `EXISTS (SELECT 1 FROM orchestrator_config WHERE id = 0 AND orchestratorIdentity = :sender)`;
+
+/** A client sees only their own match sessions (or the orchestrator sees all). */
+export const matchSessionVisibility = spacetimedb.clientVisibilityFilter.sql(`
+  SELECT * FROM match_session
+  WHERE owner = :sender
+     OR ${ORCH_CHECK}
+`);
+
+/**
+ * A client sees a conversation only if they own the initiator persona OR the
+ * partner persona. The orchestrator sees all.
+ */
+export const conversationVisibility = spacetimedb.clientVisibilityFilter.sql(`
+  SELECT c.* FROM conversation c
+  WHERE ${ORCH_CHECK}
+     OR EXISTS (SELECT 1 FROM persona p WHERE p.id = c.initiatorPersonaId AND p.owner = :sender)
+     OR EXISTS (SELECT 1 FROM persona p WHERE p.id = c.partnerPersonaId  AND p.owner = :sender)
+`);
+
+/**
+ * A client sees a message only if they can see its parent conversation.
+ * Derived from the same persona-ownership rule; the orchestrator sees all.
+ */
+export const messageVisibility = spacetimedb.clientVisibilityFilter.sql(`
+  SELECT m.* FROM message m
+  WHERE ${ORCH_CHECK}
+     OR EXISTS (
+       SELECT 1 FROM conversation c
+       WHERE c.id = m.conversationId
+         AND (
+           EXISTS (SELECT 1 FROM persona p WHERE p.id = c.initiatorPersonaId AND p.owner = :sender)
+           OR EXISTS (SELECT 1 FROM persona p WHERE p.id = c.partnerPersonaId  AND p.owner = :sender)
+         )
+     )
+`);
+
+/** A client sees match results only for their own sessions (or the orchestrator sees all). */
+export const matchResultVisibility = spacetimedb.clientVisibilityFilter.sql(`
+  SELECT mr.* FROM match_result mr
+  WHERE ${ORCH_CHECK}
+     OR EXISTS (SELECT 1 FROM match_session ms WHERE ms.id = mr.sessionId AND ms.owner = :sender)
+`);
+
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -420,50 +474,6 @@ export const startMatch = spacetimedb.reducer(
       scheduledId: 0n,
       scheduledAt: ScheduleAt.time(deadlineMicros),
       sessionId: session.id,
-    });
-  }
-);
-
-// ── Reducers: human takeover ─────────────────────────────────────────────────────
-export const sendHumanMessage = spacetimedb.reducer(
-  { conversationId: t.u64(), content: t.string() },
-  (ctx, { conversationId, content }) => {
-    const convo = ctx.db.conversation.id.find(conversationId);
-    if (!convo) throw new SenderError('conversation not found');
-    if (convo.status === 'complete') throw new SenderError('conversation is already complete');
-
-    const initiator = ctx.db.persona.id.find(convo.initiatorPersonaId);
-    if (!initiator || !initiator.owner.equals(ctx.sender)) {
-      throw new SenderError('not your conversation');
-    }
-
-    const trimmed = content.trim();
-    if (trimmed.length === 0) throw new SenderError('content required');
-    if (trimmed.length > MAX_MESSAGE_LEN) throw new SenderError('message too long');
-
-    const seq = convo.turnCount;
-
-    // Idempotency: one message per (conversationId, seq).
-    const dup = [...ctx.db.message.conversationId.filter(conversationId)].some(m => m.seq === seq);
-    if (dup) return;
-
-    ctx.db.message.insert({
-      id: 0n,
-      conversationId,
-      sessionId: convo.sessionId,
-      senderPersonaId: initiator.id,
-      senderName: initiator.displayName,
-      content: trimmed,
-      source: 'human',
-      seq,
-      createdAt: ctx.timestamp,
-    });
-
-    ctx.db.conversation.id.update({
-      ...convo,
-      status: 'active',
-      turnCount: seq + 1,
-      updatedAt: ctx.timestamp,
     });
   }
 );
