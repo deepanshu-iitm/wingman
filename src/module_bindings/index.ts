@@ -42,6 +42,7 @@ import FinalizeSessionReducer from "./finalize_session_reducer";
 import RegisterOrchestratorReducer from "./register_orchestrator_reducer";
 import ReleaseConversationReducer from "./release_conversation_reducer";
 import SendHumanMessageReducer from "./send_human_message_reducer";
+import SendMatchMessageReducer from "./send_match_message_reducer";
 import StartMatchReducer from "./start_match_reducer";
 import TakeOverConversationReducer from "./take_over_conversation_reducer";
 import UpdateSignalReducer from "./update_signal_reducer";
@@ -150,6 +151,7 @@ const reducersSchema = __reducers(
   __reducerSchema("register_orchestrator", RegisterOrchestratorReducer),
   __reducerSchema("release_conversation", ReleaseConversationReducer),
   __reducerSchema("send_human_message", SendHumanMessageReducer),
+  __reducerSchema("send_match_message", SendMatchMessageReducer),
   __reducerSchema("start_match", StartMatchReducer),
   __reducerSchema("take_over_conversation", TakeOverConversationReducer),
   __reducerSchema("update_signal", UpdateSignalReducer),

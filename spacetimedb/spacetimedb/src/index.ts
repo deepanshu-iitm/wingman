@@ -358,6 +358,40 @@ function finalizeSessionInternal(ctx: Ctx, sessionId: bigint, timedOut: boolean)
   if (!session || session.status !== 'matching') return;
 
   const total = Number(session.totalConversations);
+
+  // A conversation is "settled" once it is complete OR a human has taken it
+  // over. An unreleased human takeover never reaches completeConversation, so
+  // without counting it here it would block the normal finish forever.
+  const settled = [...ctx.db.conversation.sessionId.filter(sessionId)].filter(
+    c => c.status === 'complete' || c.controlMode === 'human'
+  );
+
+  // Normal path waits for every conversation to settle; the watchdog finalizes
+  // whatever is available.
+  if (!timedOut && settled.length < total) return;
+
+  // Human-held conversations never went through completeConversation, so they
+  // have no score and are still 'active'. Product decision: treat a human
+  // takeover as settled — complete it here and rank it by its signalStrength
+  // (there is no LLM verdict for a human-driven chat).
+  for (const c of settled) {
+    if (c.status === 'complete') continue;
+    const proxyScore = Math.max(0, Math.min(100, c.signalStrength));
+    const existing = ctx.db.conversation_score.conversationId.find(c.id);
+    if (existing) {
+      ctx.db.conversation_score.conversationId.update({ ...existing, rawScore: proxyScore });
+    } else {
+      ctx.db.conversation_score.insert({ conversationId: c.id, rawScore: proxyScore });
+    }
+    ctx.db.conversation.id.update({
+      ...c,
+      status: 'complete',
+      reason: c.reason ?? 'You took the wheel on this conversation.',
+      updatedAt: ctx.timestamp,
+    });
+  }
+
+  // Re-read after settling human takeovers, then rank by honest rawScore.
   const convos = [...ctx.db.conversation.sessionId.filter(sessionId)]
     .filter(c => c.status === 'complete')
     .map(conversation => ({
@@ -371,9 +405,6 @@ function finalizeSessionInternal(ctx: Ctx, sessionId: bigint, timedOut: boolean)
       } => entry.score !== undefined
     )
     .sort((a, b) => b.score.rawScore - a.score.rawScore);
-
-  // Normal path waits for a complete run; the watchdog finalizes partials.
-  if (!timedOut && convos.length < total) return;
 
   const topN = Math.min(TOP_N_RESULTS, convos.length);
   for (let i = 0; i < convos.length; i++) {
@@ -559,6 +590,9 @@ export const updateSignal = spacetimedb.reducer(
     requireOrchestrator(ctx);
     const convo = ctx.db.conversation.id.find(conversationId);
     if (!convo) throw new SenderError('conversation not found');
+    // A completed conversation's signalStrength is final; a late/retried
+    // updateSignal must not overwrite it with a ramped play value.
+    if (convo.status === 'complete') return;
     const clamped = Math.max(0, Math.min(100, signalStrength));
     ctx.db.conversation.id.update({
       ...convo,
@@ -689,6 +723,67 @@ export const releaseConversation = spacetimedb.reducer(
       ...convo,
       controlMode: 'agent',
       humanPersonaId: undefined,
+      updatedAt: ctx.timestamp,
+    });
+  }
+);
+
+/**
+ * Post-match chat (screen 09). A matched conversation is always `status:
+ * 'complete'`, so `requireParticipant` (and therefore takeOver/sendHuman)
+ * rejects it. This reducer lets the two matched humans keep talking on top of
+ * a completed conversation WITHOUT reopening it for the orchestrator: it never
+ * flips status back to 'active' and never touches controlMode, so live-matching
+ * invariants are untouched. Gated on an existing match_result the caller owns,
+ * so you can only post-match-chat a conversation you actually matched with.
+ */
+export const sendMatchMessage = spacetimedb.reducer(
+  { conversationId: t.u64(), personaId: t.u64(), content: t.string() },
+  (ctx, { conversationId, personaId, content }) => {
+    const convo = ctx.db.conversation.id.find(conversationId);
+    if (!convo) throw new SenderError('conversation not found');
+    if (
+      personaId !== convo.initiatorPersonaId &&
+      personaId !== convo.partnerPersonaId
+    ) {
+      throw new SenderError('persona is not part of this conversation');
+    }
+    const participant = ctx.db.persona.id.find(personaId);
+    if (!participant || !participant.owner.equals(ctx.sender)) {
+      throw new SenderError('not your persona');
+    }
+    // Only a real match unlocks post-match chat: the caller must own a
+    // match_result pointing at this conversation.
+    const matched = [...ctx.db.match_result.iter()].some(
+      (r) => r.conversationId === conversationId && r.owner.equals(ctx.sender)
+    );
+    if (!matched) throw new SenderError('no match for this conversation');
+
+    const trimmed = content.trim();
+    if (trimmed.length === 0) throw new SenderError('message required');
+    if (trimmed.length > MAX_MESSAGE_LEN) throw new SenderError('message too long');
+
+    const nextSeq = [...ctx.db.message.conversationId.filter(conversationId)]
+      .reduce((max, row) => Math.max(max, row.seq + 1), 0);
+    ctx.db.message.insert({
+      id: 0n,
+      conversationId,
+      sessionId: convo.sessionId,
+      initiatorOwner: convo.initiatorOwner,
+      partnerOwner: convo.partnerOwner,
+      orchestratorIdentity: convo.orchestratorIdentity,
+      senderPersonaId: personaId,
+      senderName: participant.displayName,
+      content: trimmed,
+      source: 'human',
+      seq: nextSeq,
+      createdAt: ctx.timestamp,
+    });
+    // Keep status 'complete' — this is chat on top of a settled match, not a
+    // reopened live conversation. Only bump the turn counter + updatedAt.
+    ctx.db.conversation.id.update({
+      ...convo,
+      turnCount: nextSeq + 1,
       updatedAt: ctx.timestamp,
     });
   }

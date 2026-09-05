@@ -30,6 +30,7 @@ import {
   type PersonaLike,
   type Turn,
 } from './generateConversation.js';
+import { shouldArchiveConversation } from './conversationLifecycle.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -153,6 +154,19 @@ async function processSession(conn: DbConnection, sessionId: bigint): Promise<vo
   }
 }
 
+async function completedForArchive(
+  conn: DbConnection,
+  conversationId: bigint,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const conversation = conn.db.conversation.id.find(conversationId);
+    if (shouldArchiveConversation(conversation)) return true;
+    if (!conversation || conversation.controlMode === 'human') return false;
+    await sleep(25);
+  }
+  return false;
+}
+
 async function runConversation(conn: DbConnection, sessionId: bigint, conversationId: bigint): Promise<void> {
   const convo0 = conn.db.conversation.id.find(conversationId);
   if (!convo0 || convo0.status === 'complete') return;
@@ -218,6 +232,13 @@ async function runConversation(conn: DbConnection, sessionId: bigint, conversati
     signalStrength: score.signalStrength,
     reason: score.reason,
   });
+
+  if (!(await completedForArchive(conn, conversationId))) {
+    console.log(
+      `Conversation ${conversationId}: completion did not persist; skipping archive.`,
+    );
+    return;
+  }
 
   await conn.reducers.archiveConversation({
     sessionId,
