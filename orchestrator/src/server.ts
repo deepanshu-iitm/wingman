@@ -9,7 +9,8 @@ import { attachInterviewStream } from './interviewStream.js';
 import { extractPersona, PersonaExtractionError } from './persona.js';
 import { TranscriptionError, transcribeAudio } from './smallest.js';
 
-const port = Number(process.env.ORCHESTRATOR_PORT ?? 8787);
+// Managed hosts (Render, Railway, Fly, …) inject the bound port via PORT.
+const port = Number(process.env.PORT ?? process.env.ORCHESTRATOR_PORT ?? 8787);
 const clientOrigin = process.env.CLIENT_ORIGIN ?? 'http://localhost:5173';
 const maxAudioBytes = 20 * 1024 * 1024;
 const supportedAudioTypes = new Set([
