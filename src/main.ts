@@ -29,17 +29,20 @@ const ORCHESTRATOR_URL = (
 ).replace(/\/+$/, "");
 const TOP_N_SHOWN = 4;
 const TOKEN_KEY = "wingman_token";
-const MAX_RECORDING_MS = 120_000;
+const MAX_INTERVIEW_MS = 5 * 60_000;
+const INTERVIEW_SAMPLE_RATE = 16_000;
 
 // ── State ───────────────────────────────────────────────────────────────────
 let myIdentity: Identity | null = null;
 let activeSessionId: bigint | null = null;
 let watchForNewSession = false;
 let conn: DbConnection;
-let recorder: MediaRecorder | null = null;
+let interviewSocket: WebSocket | null = null;
 let microphoneStream: MediaStream | null = null;
-let audioChunks: Blob[] = [];
-let recordingTimer: ReturnType<typeof setTimeout> | undefined;
+let audioContext: AudioContext | null = null;
+let audioProcessor: ScriptProcessorNode | null = null;
+let captureEnabled = false;
+let interviewTimer: ReturnType<typeof setTimeout> | undefined;
 
 // ── DOM ─────────────────────────────────────────────────────────────────────
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -54,6 +57,8 @@ const voiceConsent = $("voice-consent") as HTMLInputElement;
 const recordButton = $("voice-record") as HTMLButtonElement;
 const stopButton = $("voice-stop") as HTMLButtonElement;
 const voiceStatus = $("voice-status");
+const voiceQuestion = $("voice-question");
+const voiceTranscript = $("voice-transcript");
 const activeSelect = $("active-persona") as HTMLSelectElement;
 const matchBtn = $("match-btn") as HTMLButtonElement;
 const boardSection = $("board");
@@ -83,139 +88,288 @@ function setVoiceStatus(
   voiceStatus.classList.toggle("error", state === "error");
 }
 
-function releaseMicrophone(): void {
-  clearTimeout(recordingTimer);
-  recordingTimer = undefined;
+async function releaseMicrophone(): Promise<void> {
+  clearTimeout(interviewTimer);
+  interviewTimer = undefined;
+  captureEnabled = false;
+  audioProcessor?.disconnect();
+  audioProcessor = null;
   microphoneStream?.getTracks().forEach((track) => track.stop());
   microphoneStream = null;
-  recorder = null;
+  if (audioContext) await audioContext.close();
+  audioContext = null;
   stopButton.disabled = true;
 }
 
-async function readApiResponse<T>(response: Response, fallback: string): Promise<T> {
-  let result: { error?: unknown } & Partial<T>;
-  try {
-    result = (await response.json()) as { error?: unknown } & Partial<T>;
-  } catch {
-    throw new Error(fallback);
+function pcm16Buffer(samples: Float32Array): ArrayBuffer {
+  const output = new ArrayBuffer(samples.length * 2);
+  const view = new DataView(output);
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[index] ?? 0));
+    view.setInt16(
+      index * 2,
+      sample < 0 ? sample * 0x8000 : sample * 0x7fff,
+      true,
+    );
   }
-  if (!response.ok) {
-    throw new Error(typeof result.error === "string" ? result.error : fallback);
-  }
-  return result as T;
+  return output;
 }
 
-async function buildPersonaFromRecording(audio: Blob): Promise<void> {
-  recordButton.disabled = true;
-  setVoiceStatus("Transcribing your recording…");
-
-  try {
-    const transcriptionResponse = await fetch(
-      `${ORCHESTRATOR_URL}/api/transcribe?language=en`,
-      {
-        method: "POST",
-        headers: { "Content-Type": audio.type || "application/octet-stream" },
-        body: audio,
-      },
+function resampleTo16Khz(
+  samples: Float32Array,
+  inputSampleRate: number,
+): Float32Array {
+  if (inputSampleRate === INTERVIEW_SAMPLE_RATE) return samples;
+  const ratio = inputSampleRate / INTERVIEW_SAMPLE_RATE;
+  const output = new Float32Array(Math.round(samples.length / ratio));
+  for (let outputIndex = 0; outputIndex < output.length; outputIndex += 1) {
+    const start = Math.floor(outputIndex * ratio);
+    const end = Math.min(
+      samples.length,
+      Math.floor((outputIndex + 1) * ratio),
     );
-    const { transcript } = await readApiResponse<{ transcript: string }>(
-      transcriptionResponse,
-      "Transcription failed. Please try again.",
-    );
+    let sum = 0;
+    for (let inputIndex = start; inputIndex < end; inputIndex += 1) {
+      sum += samples[inputIndex] ?? 0;
+    }
+    output[outputIndex] = sum / Math.max(1, end - start);
+  }
+  return output;
+}
 
-    setVoiceStatus("Creating your persona draft…");
-    const personaResponse = await fetch(`${ORCHESTRATOR_URL}/api/persona`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        displayName: nameInput.value.trim(),
-        transcript,
-      }),
-    });
-    const { persona } = await readApiResponse<{ persona: PersonaDraft }>(
-      personaResponse,
-      "Persona extraction failed. Please try again.",
-    );
+function audioBufferFromBase64(audioBase64: string): ArrayBuffer {
+  const bytes = Uint8Array.from(atob(audioBase64), (character) =>
+    character.charCodeAt(0),
+  );
+  return bytes.buffer;
+}
 
-    nameInput.value = persona.displayName;
-    summaryInput.value = persona.summary;
-    interestsInput.value = persona.interests.join(", ");
-    valuesInput.value = persona.values.join(", ");
-    styleInput.value = persona.socialStyle;
+async function playAgentSpeech(
+  audioBase64: string,
+  _contentType: string,
+): Promise<void> {
+  if (!audioContext) throw new Error("Audio context is unavailable");
+  captureEnabled = false;
+  const decoded = await audioContext.decodeAudioData(
+    audioBufferFromBase64(audioBase64),
+  );
+  const source = audioContext.createBufferSource();
+  source.buffer = decoded;
+  source.connect(audioContext.destination);
+  await new Promise<void>((resolve) => {
+    source.addEventListener("ended", () => resolve(), { once: true });
+    source.start();
+  });
+}
+
+function applyPersonaDraft(persona: PersonaDraft): void {
+  nameInput.value = persona.displayName;
+  summaryInput.value = persona.summary;
+  interestsInput.value = persona.interests.join(", ");
+  valuesInput.value = persona.values.join(", ");
+  styleInput.value = persona.socialStyle;
+}
+
+type InterviewMessage = {
+  type?: string;
+  state?: string;
+  text?: string;
+  reply?: string;
+  question?: string;
+  error?: string;
+  audioBase64?: string;
+  contentType?: string;
+  persona?: PersonaDraft;
+};
+
+function handleInterviewMessage(message: InterviewMessage): void {
+  if (message.type === "ready" && message.question) {
+    voiceQuestion.textContent = `Wingman: ${message.question}`;
+    voiceQuestion.classList.remove("hidden");
+    stopButton.disabled = false;
+    setVoiceStatus("Wingman is asking your first question…");
+    return;
+  }
+  if (message.type === "transcript.partial" && message.text) {
+    voiceTranscript.textContent = `You: ${message.text}`;
+    voiceTranscript.classList.remove("hidden");
+    return;
+  }
+  if (message.type === "transcript.final" && message.text) {
+    voiceTranscript.textContent = `You: ${message.text}`;
+    voiceTranscript.classList.remove("hidden");
+    captureEnabled = false;
+    return;
+  }
+  if (message.type === "question" && message.question) {
+    voiceQuestion.textContent = `Wingman: ${message.reply ?? ""} ${message.question}`;
+    voiceQuestion.classList.remove("hidden");
+    captureEnabled = false;
+    return;
+  }
+  if (message.type === "reply" && message.text) {
+    voiceQuestion.textContent = `Wingman: ${message.text}`;
+    voiceQuestion.classList.remove("hidden");
+    captureEnabled = false;
+    return;
+  }
+  if (
+    message.type === "speech" &&
+    message.audioBase64 &&
+    message.contentType
+  ) {
+    void playAgentSpeech(message.audioBase64, message.contentType)
+      .then(() => {
+        if (interviewSocket?.readyState === WebSocket.OPEN) {
+          captureEnabled = true;
+          setVoiceStatus("Listening… answer naturally, then pause for five seconds.");
+        }
+      })
+      .catch(() => {
+        captureEnabled = true;
+        setVoiceStatus("Audio playback failed. Answer the question shown above.", "error");
+      });
+    return;
+  }
+  if (message.type === "speech.unavailable") {
+    captureEnabled = true;
+    setVoiceStatus("Voice playback is unavailable. Answer the question shown above.");
+    return;
+  }
+  if (message.type === "finish.rejected") {
+    captureEnabled = true;
+    stopButton.disabled = false;
+    setVoiceStatus(message.error ?? "Answer a question before finishing.", "error");
+    return;
+  }
+  if (message.type === "status") {
+    const labels: Record<string, string> = {
+      thinking: "Wingman is thinking of a follow-up…",
+      generating_speech: "Wingman is preparing its voice response…",
+      creating_persona: "Creating your persona draft…",
+    };
+    if (message.state && labels[message.state]) {
+      setVoiceStatus(labels[message.state]);
+    }
+    return;
+  }
+  if (message.type === "persona" && message.persona) {
+    applyPersonaDraft(message.persona);
+    void releaseMicrophone();
+    interviewSocket?.close();
+    interviewSocket = null;
+    recordButton.disabled = false;
     setVoiceStatus(
       "Persona draft ready. Review it below, then create your persona.",
       "success",
     );
     summaryInput.focus();
-  } catch (error) {
-    setVoiceStatus(
-      error instanceof Error
-        ? error.message
-        : "Voice onboarding failed. Please try again or enter your persona manually.",
-      "error",
-    );
-  } finally {
-    recordButton.disabled = false;
+    return;
   }
+  if (message.type === "error") {
+    setVoiceStatus(message.error ?? "Voice interview failed. Please try again.", "error");
+  }
+}
+
+async function startVoiceInterview(): Promise<void> {
+  microphoneStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  });
+  audioContext = new AudioContext({ sampleRate: INTERVIEW_SAMPLE_RATE });
+  await audioContext.resume();
+
+  const source = audioContext.createMediaStreamSource(microphoneStream);
+  audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+  const silentOutput = audioContext.createGain();
+  silentOutput.gain.value = 0;
+  source.connect(audioProcessor);
+  audioProcessor.connect(silentOutput);
+  silentOutput.connect(audioContext.destination);
+
+  const webSocketUrl = new URL(
+    ORCHESTRATOR_URL.replace(/^http/, "ws") + "/api/interview/stream",
+  );
+  webSocketUrl.searchParams.set("displayName", nameInput.value.trim());
+  webSocketUrl.searchParams.set("language", "en");
+  interviewSocket = new WebSocket(webSocketUrl);
+  interviewSocket.binaryType = "arraybuffer";
+
+  audioProcessor.addEventListener("audioprocess", (event) => {
+    if (
+      !captureEnabled ||
+      interviewSocket?.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
+    const samples = resampleTo16Khz(
+      event.inputBuffer.getChannelData(0),
+      event.inputBuffer.sampleRate,
+    );
+    interviewSocket.send(pcm16Buffer(samples));
+  });
+  interviewSocket.addEventListener("message", (event) => {
+    if (typeof event.data !== "string") return;
+    try {
+      handleInterviewMessage(JSON.parse(event.data) as InterviewMessage);
+    } catch {
+      setVoiceStatus("Wingman sent an invalid interview response.", "error");
+    }
+  });
+  interviewSocket.addEventListener("close", () => {
+    if (summaryInput.value.trim()) return;
+    void releaseMicrophone();
+    recordButton.disabled = false;
+  });
+  interviewSocket.addEventListener("error", () => {
+    setVoiceStatus("Could not connect to the voice interview.", "error");
+    void releaseMicrophone();
+    recordButton.disabled = false;
+  });
+
+  recordButton.disabled = true;
+  stopButton.disabled = true;
+  voiceQuestion.classList.add("hidden");
+  voiceTranscript.classList.add("hidden");
+  setVoiceStatus("Connecting to Wingman…");
+  interviewTimer = setTimeout(() => {
+    if (interviewSocket?.readyState === WebSocket.OPEN) {
+      captureEnabled = false;
+      interviewSocket.send(JSON.stringify({ type: "finish" }));
+      setVoiceStatus("Creating your persona…");
+    }
+  }, MAX_INTERVIEW_MS);
 }
 
 recordButton.addEventListener("click", async () => {
   if (!nameInput.value.trim()) {
-    setVoiceStatus("Enter your display name before recording.", "error");
+    setVoiceStatus("Enter your display name before starting.", "error");
     nameInput.focus();
     return;
   }
   if (!voiceConsent.checked) {
-    setVoiceStatus("Please confirm consent before recording.", "error");
+    setVoiceStatus("Please confirm consent before starting.", "error");
     voiceConsent.focus();
     return;
   }
-  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+  if (!navigator.mediaDevices?.getUserMedia || !window.AudioContext) {
     setVoiceStatus(
-      "Voice recording is unavailable in this browser. Enter your persona manually below.",
+      "Live voice is unavailable in this browser. Enter your persona manually below.",
       "error",
     );
     return;
   }
 
-  const supportedType = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/ogg;codecs=opus",
-    "audio/mp4",
-  ].find((type) => MediaRecorder.isTypeSupported(type));
-
   try {
-    microphoneStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioChunks = [];
-    recorder = new MediaRecorder(
-      microphoneStream,
-      supportedType ? { mimeType: supportedType } : undefined,
-    );
-    recorder.addEventListener("dataavailable", (event) => {
-      if (event.data.size > 0) audioChunks.push(event.data);
-    });
-    recorder.addEventListener("stop", () => {
-      const mimeType = recorder?.mimeType || "application/octet-stream";
-      const capturedChunks = audioChunks;
-      releaseMicrophone();
-      if (capturedChunks.length === 0) {
-        recordButton.disabled = false;
-        setVoiceStatus("No audio was captured. Please try recording again.", "error");
-        return;
-      }
-      const audio = new Blob(capturedChunks, { type: mimeType });
-      void buildPersonaFromRecording(audio);
-    });
-    recorder.start();
-    recordButton.disabled = true;
-    stopButton.disabled = false;
-    setVoiceStatus("Listening… tell Wingman about yourself.");
-    recordingTimer = setTimeout(() => {
-      if (recorder?.state === "recording") recorder.stop();
-    }, MAX_RECORDING_MS);
+    await startVoiceInterview();
   } catch {
-    releaseMicrophone();
+    await releaseMicrophone();
+    interviewSocket?.close();
+    interviewSocket = null;
     recordButton.disabled = false;
     setVoiceStatus(
       "Microphone access failed. Allow access and retry, or enter your persona manually.",
@@ -225,7 +379,11 @@ recordButton.addEventListener("click", async () => {
 });
 
 stopButton.addEventListener("click", () => {
-  if (recorder?.state === "recording") recorder.stop();
+  if (interviewSocket?.readyState !== WebSocket.OPEN) return;
+  captureEnabled = false;
+  stopButton.disabled = true;
+  interviewSocket.send(JSON.stringify({ type: "finish" }));
+  setVoiceStatus("Finishing your answer and creating your persona…");
 });
 
 // ── Connect ─────────────────────────────────────────────────────────────────

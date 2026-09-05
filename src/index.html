@@ -28,12 +28,14 @@
             </span>
           </label>
           <div class="voice-actions">
-            <button id="voice-record" type="button">🎙 Start recording</button>
-            <button id="voice-stop" type="button" disabled>Stop</button>
+            <button id="voice-record" type="button">🎙 Start voice interview</button>
+            <button id="voice-stop" type="button" disabled>Finish interview</button>
           </div>
           <p id="voice-status" class="voice-status" role="status" aria-live="polite">
-            Enter your name, then record for up to two minutes.
+            Enter your name, then have a short conversation with Wingman.
           </p>
+          <p id="voice-question" class="voice-question hidden"></p>
+          <p id="voice-transcript" class="voice-transcript hidden" aria-live="polite"></p>
         </div>
 
         <p class="muted">Review and edit your persona before creating it.</p>
