@@ -12,6 +12,7 @@ export const CONFIG = {
   CONCURRENCY: Number(process.env.CONCURRENCY ?? 6),
   PACING_MS: Number(process.env.PACING_MS ?? 500),
   DEADLINE_MS: Number(process.env.DEADLINE_MS ?? 180_000),
+  RETRY_SCAN_MS: Number(process.env.RETRY_SCAN_MS ?? 3_000),
 
   // How often (every N turns) to push a signal-strength update during playback.
   SIGNAL_UPDATE_EVERY: Number(process.env.SIGNAL_UPDATE_EVERY ?? 2),

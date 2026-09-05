@@ -8,7 +8,7 @@
  *     turns can react to what has actually been written (including a human
  *     takeover). This is agents acting through shared state, not scripted
  *     playback.
- *   • `scoreConversation(a, b)` — a deterministic compatibility judgement used
+ *   • `scoreConversation(a, b, history)` — judges the completed conversation
  *     for ranking + training. Kept internal; never shown as a "% match".
  *
  * Both ship in deterministic **placeholder mode** (canned, persona-flavored
@@ -47,6 +47,14 @@ export interface ConversationScore {
   model: string;
 }
 
+type Fetch = typeof fetch;
+
+type ChatCompletionResponse = {
+  choices?: Array<{ message?: { content?: unknown } }>;
+};
+
+const SCORE_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
+
 // ── Public seam: one turn at a time ──────────────────────────────────────────
 
 /**
@@ -82,17 +90,111 @@ export function plannedTurnCount(): number {
  * Deterministic compatibility judgement for ranking + training. LLM drop-in:
  * replace with a single "judge" call over the finished transcript.
  */
-export function scoreConversation(a: PersonaLike, b: PersonaLike): ConversationScore {
+export async function scoreConversation(
+  a: PersonaLike,
+  b: PersonaLike,
+  history: Turn[],
+  fetchImpl: Fetch = fetch,
+): Promise<ConversationScore> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (apiKey) {
+    const response = await fetchImpl(SCORE_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL ?? 'gpt-5-nano',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Assess friendship compatibility using only the supplied personas and completed conversation. ' +
+              'Return a 0-100 integer score and a concise rationale under 300 characters. ' +
+              'Do not infer sensitive traits.',
+          },
+          {
+            role: 'user',
+            content: JSON.stringify({
+              firstPersona: a,
+              secondPersona: b,
+              conversation: history.slice(-16).map(turn => ({
+                senderName: turn.senderName,
+                content: turn.content.slice(0, 600),
+              })),
+            }, (_key, value) => typeof value === 'bigint' ? value.toString() : value),
+          },
+        ],
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'compatibility_verdict',
+            strict: true,
+            schema: {
+              type: 'object',
+              properties: {
+                score: { type: 'integer', minimum: 0, maximum: 100 },
+                rationale: { type: 'string' },
+              },
+              required: ['score', 'rationale'],
+              additionalProperties: false,
+            },
+          },
+        },
+        max_completion_tokens: 2_000,
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!response.ok) {
+      throw new Error(`Verdict generation failed with status ${response.status}`);
+    }
+    const payload = (await response.json()) as ChatCompletionResponse;
+    const content = payload.choices?.[0]?.message?.content;
+    if (typeof content !== 'string' || content.length === 0) {
+      throw new Error('Model returned no verdict');
+    }
+    const verdict = JSON.parse(content) as { score?: unknown; rationale?: unknown };
+    if (
+      typeof verdict.score !== 'number' ||
+      !Number.isInteger(verdict.score) ||
+      verdict.score < 0 ||
+      verdict.score > 100 ||
+      typeof verdict.rationale !== 'string' ||
+      verdict.rationale.trim().length === 0
+    ) {
+      throw new Error('Model returned an invalid verdict');
+    }
+    return {
+      rawScore: verdict.score,
+      signalStrength: verdict.score,
+      reason: verdict.rationale.trim().slice(0, 300),
+      model: process.env.OPENAI_MODEL ?? 'gpt-5-nano',
+    };
+  }
+
+  return scorePlaceholder(a, b, history);
+}
+
+function scorePlaceholder(
+  a: PersonaLike,
+  b: PersonaLike,
+  history: Turn[],
+): ConversationScore {
   const sharedInterests = overlap(a.interests, b.interests);
   const sharedValues = overlap(a.values, b.values);
   const styleMatch = norm(a.socialStyle) === norm(b.socialStyle) && a.socialStyle.length > 0;
+  const participants = new Set(history.map(turn => turn.senderPersonaId.toString()));
+  const conversationEvidence =
+    Math.min(12, history.length * 2) + (participants.size >= 2 ? 4 : 0);
 
   const rawScore = clamp(
     Math.round(
-      34 +
+      18 +
         sharedInterests.length * 13 +
         sharedValues.length * 11 +
         (styleMatch ? 8 : 0) +
+        conversationEvidence +
         jitter(a.id, b.id),
     ),
     0,
@@ -109,7 +211,7 @@ export function scoreConversation(a: PersonaLike, b: PersonaLike): ConversationS
       ? `Strong fit — ${reasonParts.join('; ')}.`
       : `Friendly, easy rapport with room to grow.`;
 
-  return { rawScore, signalStrength, reason, model: 'placeholder' };
+  return { rawScore, signalStrength, reason, model: 'placeholder-conversation' };
 }
 
 // ── Placeholder helpers ──────────────────────────────────────────────────────
