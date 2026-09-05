@@ -39,6 +39,10 @@ echo "==> Generating TypeScript client bindings…"
   --lang typescript \
   --out-dir src/module_bindings \
   --module-path spacetimedb/spacetimedb
+"${SPACETIME}" generate \
+  --lang typescript \
+  --out-dir orchestrator/matching/src/module_bindings \
+  --module-path spacetimedb/spacetimedb
 
 # 3. Install client deps (idempotent)
 echo ""
@@ -57,5 +61,6 @@ VITE_MODULE_NAME="${MODULE_NAME}" npm --prefix src run dev
 #   $env:MODULE = "wingman-demo"
 #   spacetime publish $env:MODULE --yes
 #   spacetime generate --lang typescript --out-dir src/module_bindings --module-path spacetimedb/spacetimedb
+#   spacetime generate --lang typescript --out-dir orchestrator/matching/src/module_bindings --module-path spacetimedb/spacetimedb
 #   npm --prefix src install
 #   $env:VITE_MODULE_NAME = $env:MODULE; npm --prefix src run dev

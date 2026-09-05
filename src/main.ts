@@ -122,6 +122,39 @@ matchBtn.addEventListener("click", () => {
   conn.reducers.startMatch({ personaId: BigInt(activeSelect.value) });
 });
 
+convosEl.addEventListener("click", async (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-action]");
+  if (!button || !conn || activeSessionId === null) return;
+  const session = conn.db.matchSession.id.find(activeSessionId);
+  const conversationId = button.dataset.conversationId;
+  if (!session || !conversationId) return;
+
+  const args = {
+    conversationId: BigInt(conversationId),
+    personaId: session.initiatorPersonaId,
+  };
+  button.disabled = true;
+  try {
+    if (button.dataset.action === "takeover") {
+      await conn.reducers.takeOverConversation(args);
+    } else if (button.dataset.action === "release") {
+      await conn.reducers.releaseConversation(args);
+    } else if (button.dataset.action === "send") {
+      const input = convosEl.querySelector<HTMLInputElement>(
+        `input[data-human-input="${conversationId}"]`,
+      );
+      const content = input?.value.trim() ?? "";
+      if (!content) return;
+      await conn.reducers.sendHumanMessage({ ...args, content });
+      if (input) input.value = "";
+    }
+  } catch (error) {
+    console.error("Conversation action failed:", error);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 // ── Render ──────────────────────────────────────────────────────────────────
 let renderQueued = false;
 function scheduleRender() {
@@ -199,6 +232,8 @@ function render() {
   boardMeta.textContent =
     session.status === "complete"
       ? `Done — talked with ${convos.length} people.`
+      : session.status === "timed_out"
+        ? `Time expired — ranked ${complete} completed conversation${complete === 1 ? "" : "s"}.`
       : `Chatting live · ${complete}/${session.totalConversations} conversations wrapped`;
 
   convosEl.innerHTML = "";
@@ -210,6 +245,21 @@ function render() {
     const card = document.createElement("div");
     card.className = "convo";
     const hot = convo.signalStrength >= 65 ? "hot" : "";
+    const controlledByMe =
+      convo.controlMode === "human" &&
+      convo.humanPersonaId === session.initiatorPersonaId;
+    const controls =
+      convo.status === "complete"
+        ? ""
+        : controlledByMe
+          ? `<div class="takeover-controls">
+              <input data-human-input="${convo.id}" placeholder="Write your message…" maxlength="2000" />
+              <button data-action="send" data-conversation-id="${convo.id}">Send</button>
+              <button data-action="release" data-conversation-id="${convo.id}">Return to agent</button>
+            </div>`
+          : convo.controlMode === "agent"
+            ? `<button data-action="takeover" data-conversation-id="${convo.id}">Take over</button>`
+            : `<span class="muted">Human joined this conversation</span>`;
     card.innerHTML = `
       <div class="convo-head">
         <strong>${escapeHtml(convo.partnerDisplayName)}</strong>
@@ -223,7 +273,8 @@ function render() {
               `<div class="msg"><span class="who">${escapeHtml(m.senderName)}:</span> ${escapeHtml(m.content)}</div>`,
           )
           .join("")}
-      </div>`;
+      </div>
+      ${controls}`;
     convosEl.appendChild(card);
   }
 
