@@ -12,8 +12,6 @@ import {
 
 export default {
   conversationId: __t.u64(),
-  senderPersonaId: __t.u64(),
-  senderName: __t.string(),
+  personaId: __t.u64(),
   content: __t.string(),
-  seq: __t.u32(),
 };

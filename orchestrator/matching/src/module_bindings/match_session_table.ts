@@ -12,17 +12,11 @@ import {
 
 export default __t.row({
   id: __t.u64().primaryKey(),
-  sessionId: __t.u64().name("session_id"),
+  owner: __t.identity(),
   initiatorPersonaId: __t.u64().name("initiator_persona_id"),
-  partnerPersonaId: __t.u64().name("partner_persona_id"),
-  partnerDisplayName: __t.string().name("partner_display_name"),
   status: __t.string(),
-  signalStrength: __t.u32().name("signal_strength"),
-  turnCount: __t.u32().name("turn_count"),
-  controlMode: __t.string().name("control_mode"),
-  humanPersonaId: __t.option(__t.u64()).name("human_persona_id"),
-  reason: __t.option(__t.string()),
-  rank: __t.option(__t.u32()),
+  totalConversations: __t.u32().name("total_conversations"),
+  startedAt: __t.timestamp().name("started_at"),
+  deadlineMicros: __t.u64().name("deadline_micros"),
   createdAt: __t.timestamp().name("created_at"),
-  updatedAt: __t.timestamp().name("updated_at"),
 });

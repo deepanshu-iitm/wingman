@@ -8,7 +8,7 @@
  *     turns can react to what has actually been written (including a human
  *     takeover). This is agents acting through shared state, not scripted
  *     playback.
- *   • `scoreConversation(a, b)` — a deterministic compatibility judgement used
+ *   • `scoreConversation(a, b, history)` — judges the completed conversation
  *     for ranking + training. Kept internal; never shown as a "% match".
  *
  * Both ship in deterministic **placeholder mode** (canned, persona-flavored
@@ -19,6 +19,11 @@
  */
 
 import { CONFIG } from './config.js';
+import {
+  generateAgentTurn as generateOpenAIAgentTurn,
+  type ConversationMessage,
+} from '../../src/agent.js';
+import { generateVerdict } from '../../src/verdict.js';
 
 /** Minimal persona shape the generator needs (subset of the `persona` row). */
 export interface PersonaLike {
@@ -34,6 +39,7 @@ export interface Turn {
   senderPersonaId: bigint;
   senderName: string;
   content: string;
+  source: 'agent' | 'human';
 }
 
 export interface ConversationScore {
@@ -46,6 +52,8 @@ export interface ConversationScore {
   /** Which generator produced this ('placeholder' | 'gpt-4o-mini' | …). */
   model: string;
 }
+
+type Fetch = typeof fetch;
 
 // ── Public seam: one turn at a time ──────────────────────────────────────────
 
@@ -62,12 +70,35 @@ export async function generateAgentTurn(
   speaker: PersonaLike,
   counterpart: PersonaLike,
   history: Turn[],
+  fetchImpl: Fetch = fetch,
 ): Promise<Turn> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (apiKey) {
+    try {
+      const result = await generateOpenAIAgentTurn(
+        speaker,
+        counterpart.displayName,
+        history.map(toConversationMessage),
+        apiKey,
+        fetchImpl,
+      );
+      return {
+        senderPersonaId: speaker.id,
+        senderName: speaker.displayName,
+        content: result.message,
+        source: 'agent',
+      };
+    } catch (error) {
+      console.warn('Agent generation failed; using placeholder turn.', error);
+    }
+  }
+
   const content = placeholderTurn(speaker, counterpart, history.length);
   return {
     senderPersonaId: speaker.id,
     senderName: speaker.displayName,
     content,
+    source: 'agent',
   };
 }
 
@@ -82,17 +113,73 @@ export function plannedTurnCount(): number {
  * Deterministic compatibility judgement for ranking + training. LLM drop-in:
  * replace with a single "judge" call over the finished transcript.
  */
-export function scoreConversation(a: PersonaLike, b: PersonaLike): ConversationScore {
+export async function scoreConversation(
+  a: PersonaLike,
+  b: PersonaLike,
+  history: Turn[],
+  fetchImpl: Fetch = fetch,
+): Promise<ConversationScore> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (apiKey) {
+    try {
+      const verdict = await generateVerdict(
+        toPersonaDraft(a),
+        toPersonaDraft(b),
+        history.map(toConversationMessage),
+        apiKey,
+        fetchImpl,
+      );
+      return {
+        rawScore: verdict.score,
+        signalStrength: verdict.score,
+        reason: verdict.rationale,
+        model: process.env.OPENAI_MODEL ?? 'gpt-5-nano',
+      };
+    } catch (error) {
+      console.warn('Verdict generation failed; using placeholder score.', error);
+    }
+  }
+
+  return scorePlaceholder(a, b, history);
+}
+
+function toConversationMessage(turn: Turn): ConversationMessage {
+  return {
+    senderName: turn.senderName,
+    content: turn.content,
+    source: turn.source,
+  };
+}
+
+function toPersonaDraft(persona: PersonaLike) {
+  return {
+    displayName: persona.displayName,
+    summary: persona.summary,
+    interests: persona.interests,
+    values: persona.values,
+    socialStyle: persona.socialStyle,
+  };
+}
+
+function scorePlaceholder(
+  a: PersonaLike,
+  b: PersonaLike,
+  history: Turn[],
+): ConversationScore {
   const sharedInterests = overlap(a.interests, b.interests);
   const sharedValues = overlap(a.values, b.values);
   const styleMatch = norm(a.socialStyle) === norm(b.socialStyle) && a.socialStyle.length > 0;
+  const participants = new Set(history.map(turn => turn.senderPersonaId.toString()));
+  const conversationEvidence =
+    Math.min(12, history.length * 2) + (participants.size >= 2 ? 4 : 0);
 
   const rawScore = clamp(
     Math.round(
-      34 +
+      18 +
         sharedInterests.length * 13 +
         sharedValues.length * 11 +
         (styleMatch ? 8 : 0) +
+        conversationEvidence +
         jitter(a.id, b.id),
     ),
     0,
@@ -109,7 +196,7 @@ export function scoreConversation(a: PersonaLike, b: PersonaLike): ConversationS
       ? `Strong fit — ${reasonParts.join('; ')}.`
       : `Friendly, easy rapport with room to grow.`;
 
-  return { rawScore, signalStrength, reason, model: 'placeholder' };
+  return { rawScore, signalStrength, reason, model: 'placeholder-conversation' };
 }
 
 // ── Placeholder helpers ──────────────────────────────────────────────────────

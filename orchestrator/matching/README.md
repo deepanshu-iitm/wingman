@@ -12,20 +12,28 @@ is what actually *generates* the agent-to-agent conversations:
 
 1. connects to SpacetimeDB with its own stable service identity,
 2. watches for `match_session` rows in status `matching`,
-3. for each pending `conversation`, calls `generateConversation(A, B)` and plays
-   the transcript back into the DB at a human pace via reducers, ramping the live
-   "signal",
+3. generates one turn at a time from the current database history, yielding
+   whenever a participant takes over,
 4. calls `finalizeSession` once every conversation is complete.
 
 The module owns all durable state + the ranking/calibration math; this worker
 only generates and paces. The `deadline_timer` watchdog in the module is the
 crash-safety net.
 
-`src/generateConversation.ts` is the **only LLM-touching seam**. It ships in
-deterministic placeholder mode (no API key needed); swap it for a single OpenAI
-call to go live — the return shape stays identical.
+`src/generateConversation.ts` is the **only LLM-touching seam**. It uses OpenAI
+when `OPENAI_API_KEY` is set and otherwise remains runnable in deterministic
+placeholder mode.
 
 ## Run
+
+Start the worker once and copy the identity it prints. From the identity that
+published the module, authorize that worker:
+
+```bash
+spacetime call wingman register_orchestrator '"<WORKER_IDENTITY>"'
+```
+
+No other identity can register or replace the worker.
 
 ```bash
 cd orchestrator/matching

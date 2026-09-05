@@ -5,8 +5,9 @@
   "type": "module",
   "description": "Match-Me matching orchestrator: generates agent conversations and writes them back to SpacetimeDB via reducers. Sibling to the voice/persona orchestrator, kept in its own folder to avoid config collisions.",
   "scripts": {
-    "start": "npx tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "start": "node --env-file-if-exists=../../.env --import tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
     "spacetimedb": "2.10.*"

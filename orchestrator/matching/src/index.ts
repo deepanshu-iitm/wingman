@@ -21,7 +21,7 @@ import {
   DbConnection,
   type ErrorContext,
   type SubscriptionEventContext,
-} from '../../../src/module_bindings/index.js';
+} from './module_bindings/index.js';
 import { CONFIG } from './config.js';
 import {
   generateAgentTurn,
@@ -107,6 +107,7 @@ function currentMessages(conn: DbConnection, conversationId: bigint) {
 
 /** Sessions we're actively working on, so we never double-run them concurrently. */
 const claimed = new Set<bigint>();
+let liveConnection: DbConnection | undefined;
 
 async function processSession(conn: DbConnection, sessionId: bigint): Promise<void> {
   if (claimed.has(sessionId)) return;
@@ -159,16 +160,14 @@ async function runConversation(conn: DbConnection, sessionId: bigint, conversati
   const a = findPersonaLike(conn, convo0.initiatorPersonaId);
   const b = findPersonaLike(conn, convo0.partnerPersonaId);
   if (!a || !b) {
-    console.warn(`Conversation ${conversationId}: missing persona; skipping.`);
-    return;
+    throw new Error(`Conversation ${conversationId}: missing persona data`);
   }
 
   const planned = plannedTurnCount();
-  const score = scoreConversation(a, b); // deterministic ranking + ramp target
 
   // Rebuild history + next sequence from what's already written (resume-safe).
   const existing = currentMessages(conn, conversationId);
-  if (existing.some((m) => m.source === 'human')) {
+  if (convo0.controlMode === 'human') {
     console.log(`Conversation ${conversationId}: human takeover — agent yields.`);
     return;
   }
@@ -176,19 +175,22 @@ async function runConversation(conn: DbConnection, sessionId: bigint, conversati
     senderPersonaId: m.senderPersonaId,
     senderName: m.senderName,
     content: m.content,
+    source: m.source === 'human' ? 'human' : 'agent',
   }));
+  const nextSeq = existing.reduce((max, message) => Math.max(max, message.seq + 1), 0);
 
-  for (let seq = existing.length; seq < planned; seq++) {
+  for (let seq = nextSeq; history.length < planned; seq++) {
     // Read current state before every turn: stop if finalized or taken over.
     const convo = conn.db.conversation.id.find(conversationId);
     if (!convo || convo.status === 'complete') return; // finalized elsewhere (deadline)
-    if (currentMessages(conn, conversationId).some((m) => m.source === 'human')) {
+    if (convo.controlMode === 'human') {
       console.log(`Conversation ${conversationId}: human takeover mid-run — agent yields.`);
       return;
     }
 
-    const speaker = seq % 2 === 0 ? a : b;
-    const counterpart = seq % 2 === 0 ? b : a;
+    const lastSpeakerId = history.at(-1)?.senderPersonaId;
+    const speaker = lastSpeakerId === a.id ? b : a;
+    const counterpart = speaker.id === a.id ? b : a;
     const turn = await generateAgentTurn(speaker, counterpart, history);
 
     await conn.reducers.appendMessage({
@@ -196,20 +198,20 @@ async function runConversation(conn: DbConnection, sessionId: bigint, conversati
       senderPersonaId: turn.senderPersonaId,
       senderName: turn.senderName,
       content: turn.content.slice(0, 2000),
-      source: 'agent',
       seq,
     });
     history.push(turn);
 
     if (seq % CONFIG.SIGNAL_UPDATE_EVERY === 0 || seq === planned - 1) {
       const progress = (seq + 1) / planned;
-      const ramped = Math.round(score.signalStrength * progress);
+      const ramped = Math.round(70 * progress);
       await conn.reducers.updateSignal({ conversationId, signalStrength: ramped });
     }
 
     await sleep(CONFIG.PACING_MS);
   }
 
+  const score = await scoreConversation(a, b, history);
   await conn.reducers.completeConversation({
     conversationId,
     rawScore: score.rawScore,
@@ -253,14 +255,11 @@ const builder = DbConnection.builder()
   .withUri(CONFIG.SPACETIMEDB_URI)
   .withDatabaseName(CONFIG.MODULE_NAME)
   .onConnect((conn: DbConnection, identity, token) => {
+    liveConnection = conn;
     saveToken(token);
     console.log('Orchestrator connected.');
     console.log('  Identity:', identity.toHexString());
     console.log('  Module  :', CONFIG.MODULE_NAME);
-
-    // Claim the orchestrator role so the module authorizes our write reducers
-    // and exposes full persona data through `orchestrator_persona`.
-    conn.reducers.registerOrchestrator({});
 
     conn
       .subscriptionBuilder()
@@ -295,5 +294,10 @@ const savedToken = loadToken();
 if (savedToken) builder.withToken(savedToken);
 
 builder.build();
+
+const retryTimer = setInterval(() => {
+  if (liveConnection) scanForWork(liveConnection);
+}, CONFIG.RETRY_SCAN_MS);
+retryTimer.unref();
 
 console.log(`Connecting to ${CONFIG.SPACETIMEDB_URI} (${CONFIG.MODULE_NAME})…`);

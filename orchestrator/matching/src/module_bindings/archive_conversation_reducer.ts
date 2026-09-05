@@ -11,9 +11,13 @@ import {
 } from "spacetimedb";
 
 export default {
-  conversationId: __t.u64(),
-  senderPersonaId: __t.u64(),
-  senderName: __t.string(),
-  content: __t.string(),
-  seq: __t.u32(),
+  sessionId: __t.u64(),
+  initiatorPersonaId: __t.u64(),
+  partnerPersonaId: __t.u64(),
+  personaSnapshot: __t.string(),
+  transcript: __t.string(),
+  rawScore: __t.u32(),
+  signalStrength: __t.u32(),
+  reason: __t.string(),
+  model: __t.string(),
 };
