@@ -67,6 +67,10 @@ const builder = DbConnection.builder()
         scheduleRender();
       })
       .onError((ctx: ErrorContext) => console.error("Subscription error:", ctx.event))
+      // Server-side clientVisibilityFilter exports in the SpacetimeDB module
+      // enforce participant-only access for match_session, conversation,
+      // message, and match_result. SELECT * is safe: the server strips
+      // unauthorised rows before they reach this client.
       .subscribe([
         "SELECT * FROM my_persona",
         "SELECT * FROM match_session",
