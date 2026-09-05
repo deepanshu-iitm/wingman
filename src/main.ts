@@ -950,6 +950,7 @@ async function handleAction(action: string, el: HTMLElement) {
   switch (action) {
     case "to-interview":
       view = "interview";
+      void requestWelcomeEmail();
       break;
     case "switch-type":
       interviewMode = "type";
@@ -1046,22 +1047,25 @@ async function createPersonaFromDraft() {
     return;
   }
 
-  if (!welcomeEmailRequested) {
-    welcomeEmailRequested = true;
-    try {
-      const response = await fetch(`${ORCHESTRATOR_URL}/api/welcome`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: signup.email.trim(),
-          displayName: signup.name.trim(),
-        }),
-      });
-      if (!response.ok) throw new Error(`Welcome email failed (${response.status})`);
-    } catch (error) {
-      welcomeEmailRequested = false;
-      console.warn("Welcome email could not be sent.", error);
-    }
+  await requestWelcomeEmail();
+}
+
+async function requestWelcomeEmail() {
+  if (welcomeEmailRequested || !EMAIL_PATTERN.test(signup.email.trim())) return;
+  welcomeEmailRequested = true;
+  try {
+    const response = await fetch(`${ORCHESTRATOR_URL}/api/welcome`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: signup.email.trim(),
+        displayName: signup.name.trim(),
+      }),
+    });
+    if (!response.ok) throw new Error(`Welcome email failed (${response.status})`);
+  } catch (error) {
+    welcomeEmailRequested = false;
+    console.warn("Welcome email could not be sent.", error);
   }
 }
 
