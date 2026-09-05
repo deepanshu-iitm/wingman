@@ -11,6 +11,7 @@ import {
   type InterviewDimension,
   type InterviewTurn,
 } from './interview.js';
+import { randomOpeningQuestion } from './openingQuestions.js';
 import { extractPersona } from './persona.js';
 import { synthesizeSpeech } from './speech.js';
 
@@ -19,8 +20,6 @@ const DEFAULT_SMALLEST_STREAM_URL =
 const MAX_QUEUED_AUDIO_BYTES = 1024 * 1024;
 const MAX_AUDIO_FRAME_BYTES = 64 * 1024;
 const ANSWER_GRACE_MS = 1_000;
-const OPENING_QUESTION =
-  'Tell me about a friendship that feels easy and natural to you. What makes it work?';
 
 type SmallestEvent = {
   type?: unknown;
@@ -140,8 +139,9 @@ export function attachInterviewStream(
       let acceptingAnswerSince = 0;
       let lastFinal = '';
       let coveredDimensions: InterviewDimension[] = [];
+      const openingQuestion = randomOpeningQuestion();
       const turns: InterviewTurn[] = [
-        { role: 'assistant', content: OPENING_QUESTION },
+        { role: 'assistant', content: openingQuestion },
       ];
 
       const sendSpokenText = async (
@@ -291,11 +291,11 @@ export function attachInterviewStream(
         queuedBytes = 0;
         sendJson(client, {
           type: 'ready',
-          question: OPENING_QUESTION,
+          question: openingQuestion,
           maximumAnswers: MAX_INTERVIEW_ANSWERS,
           audio: { encoding: 'linear16', sampleRate: 16000 },
         });
-        void sendSpokenText(OPENING_QUESTION, 'question').then(() => {
+        void sendSpokenText(openingQuestion, 'question').then(() => {
           sendJson(client, { type: 'status', state: 'awaiting_answer' });
         });
       });

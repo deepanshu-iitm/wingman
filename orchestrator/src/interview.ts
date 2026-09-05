@@ -76,11 +76,11 @@ const fallbackQuestions: Record<InterviewDimension, string> = {
 };
 
 const fallbackReplies = [
-  'Got it — that says a lot about what feels natural to you.',
-  'I hear you. That helps me understand your social rhythm.',
-  'That makes sense. I am getting a better feel for how you connect.',
-  'Thanks for being direct — that adds an important detail.',
-  'I understand. One last thing will round this out.',
+  'Oh, I get that — that sounds really natural for you.',
+  'That makes sense. I can see why you would enjoy that.',
+  'I like that answer — it gives me a better feel for your vibe.',
+  'Honestly, that is a useful detail. Thanks for being open.',
+  'Got you. Let me ask one more thing while we are here.',
 ] as const;
 
 export function fallbackInterviewStep(
@@ -136,10 +136,13 @@ export async function generateInterviewStep(
         {
           role: 'system',
           content:
-            'You are Wingman having a warm, natural conversation to understand friendship fit. ' +
-            'Respond to the meaning of the latest answer, referencing one concrete detail when ' +
-            'appropriate, then ask exactly one concise follow-up that flows naturally from it. ' +
-            'Vary acknowledgements; never repeat a stock phrase or sound like a questionnaire. ' +
+            'You are Wingman chatting like a warm, curious new friend—not conducting an interview. ' +
+            'React briefly and genuinely to the latest answer, using one concrete detail from it, ' +
+            'then ask exactly one relaxed follow-up that feels like the natural next thing a friend ' +
+            'would ask. Match the user’s energy and vocabulary without copying their sentence. ' +
+            'Use casual contractions where natural, vary your acknowledgements and question shapes, ' +
+            'and occasionally share a tiny neutral reaction such as “that sounds fun” or “I get that.” ' +
+            'Never repeat a stock phrase, summarize their profile, or sound like a questionnaire. ' +
             'Prefer a useful follow-up over mechanically changing topics, while gradually covering: ' +
             `${INTERVIEW_DIMENSIONS.join(', ')}. Use them as coverage guidance, not as a ` +
             'clinical test. Never diagnose, infer sensitive traits, or ask about trauma, ' +
