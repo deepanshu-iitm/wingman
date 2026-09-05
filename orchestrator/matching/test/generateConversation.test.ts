@@ -77,7 +77,7 @@ test('LLM verdict receives the transcript and validates structured output', asyn
       rawScore: 82,
       signalStrength: 82,
       reason: 'Shared curiosity.',
-      model: process.env.OPENAI_MODEL ?? 'gpt-5-nano',
+      model: process.env.OPENAI_MODEL ?? 'gpt-5.6-luna',
     });
   } finally {
     if (previousKey === undefined) delete process.env.OPENAI_API_KEY;

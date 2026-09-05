@@ -86,7 +86,7 @@ export async function extractPersona(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: process.env.OPENAI_MODEL ?? 'gpt-5-nano',
+      model: process.env.OPENAI_MODEL ?? 'gpt-5.6-luna',
       messages: [
         {
           role: 'system',

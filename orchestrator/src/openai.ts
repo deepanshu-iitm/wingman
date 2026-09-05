@@ -29,6 +29,7 @@ export async function requestStructuredJson<T>({
   schemaName,
   schema,
   messages,
+  model,
   fetchImpl = fetch,
   maxCompletionTokens = 4_000,
 }: {
@@ -36,6 +37,7 @@ export async function requestStructuredJson<T>({
   schemaName: string;
   schema: object;
   messages: ChatMessage[];
+  model?: string;
   fetchImpl?: FetchLike;
   maxCompletionTokens?: number;
 }): Promise<T> {
@@ -46,7 +48,7 @@ export async function requestStructuredJson<T>({
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: process.env.OPENAI_MODEL ?? 'gpt-5-nano',
+      model: model ?? process.env.OPENAI_MODEL ?? 'gpt-5.6-luna',
       messages,
       response_format: {
         type: 'json_schema',

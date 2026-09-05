@@ -18,6 +18,7 @@ const DEFAULT_SMALLEST_STREAM_URL =
   'wss://api.smallest.ai/waves/v1/pulse/get_text';
 const MAX_QUEUED_AUDIO_BYTES = 1024 * 1024;
 const MAX_AUDIO_FRAME_BYTES = 64 * 1024;
+const ANSWER_GRACE_MS = 1_000;
 const OPENING_QUESTION =
   'Tell me about a friendship that feels easy and natural to you. What makes it work?';
 
@@ -40,6 +41,18 @@ function transcriptForPersona(turns: InterviewTurn[]): string {
   return turns
     .map((turn) => `${turn.role === 'assistant' ? 'Wingman' : 'User'}: ${turn.content}`)
     .join('\n');
+}
+
+export function combineTranscriptSegments(
+  current: string,
+  incoming: string,
+): string {
+  const first = current.trim();
+  const second = incoming.trim();
+  if (!first) return second;
+  if (!second || first.endsWith(second)) return first;
+  if (second.startsWith(first)) return second;
+  return `${first} ${second}`.replace(/\s+([,.!?])/g, '$1');
 }
 
 export function attachInterviewStream(
@@ -107,7 +120,8 @@ export function attachInterviewStream(
       smallestUrl.searchParams.set('encoding', 'linear16');
       smallestUrl.searchParams.set('sample_rate', '16000');
       smallestUrl.searchParams.set('endpointing', 'true');
-      smallestUrl.searchParams.set('eou_timeout_ms', '3000');
+      smallestUrl.searchParams.set('eou_timeout_ms', '2000');
+      smallestUrl.searchParams.set('finalize_on_words', 'false');
       smallestUrl.searchParams.set('vad_events', 'true');
       smallestUrl.searchParams.set('full_transcript', 'true');
 
@@ -120,6 +134,8 @@ export function attachInterviewStream(
       let completed = false;
       let finishRequested = false;
       let finishTimer: ReturnType<typeof setTimeout> | undefined;
+      let answerTimer: ReturnType<typeof setTimeout> | undefined;
+      let pendingAnswer = '';
       let acceptingAnswer = false;
       let acceptingAnswerSince = 0;
       let lastFinal = '';
@@ -194,6 +210,7 @@ export function attachInterviewStream(
           return;
         }
         acceptingAnswer = false;
+        pendingAnswer = '';
         lastFinal = answer;
         clearTimeout(finishTimer);
         processingFinal = true;
@@ -253,6 +270,21 @@ export function attachInterviewStream(
         sendJson(client, { type: 'status', state: 'awaiting_answer' });
       };
 
+      const scheduleAnswer = (transcript: string): void => {
+        pendingAnswer = combineTranscriptSegments(pendingAnswer, transcript);
+        if (!pendingAnswer) return;
+        sendJson(client, {
+          type: 'transcript.partial',
+          text: pendingAnswer,
+        });
+        clearTimeout(answerTimer);
+        answerTimer = setTimeout(() => {
+          const completeAnswer = pendingAnswer;
+          pendingAnswer = '';
+          void handleFinalTranscript(completeAnswer);
+        }, finishRequested ? 100 : ANSWER_GRACE_MS);
+      };
+
       upstream.on('open', () => {
         for (const chunk of queuedAudio) upstream.send(chunk);
         queuedAudio.length = 0;
@@ -281,13 +313,22 @@ export function attachInterviewStream(
         ) {
           sendJson(client, { type: 'vad', event: event.type });
         }
+        if (event.type === 'speech_started' && acceptingAnswer) {
+          clearTimeout(answerTimer);
+        }
         const transcript =
           typeof event.transcript === 'string' ? event.transcript : '';
         if (!transcript) return;
         if (event.is_final === true) {
-          void handleFinalTranscript(transcript);
-        } else if (!processingFinal && !completed) {
-          sendJson(client, { type: 'transcript.partial', text: transcript });
+          if (acceptingAnswer && !processingFinal && !completed) {
+            scheduleAnswer(transcript);
+          }
+        } else if (acceptingAnswer && !processingFinal && !completed) {
+          clearTimeout(answerTimer);
+          sendJson(client, {
+            type: 'transcript.partial',
+            text: combineTranscriptSegments(pendingAnswer, transcript),
+          });
         }
       });
 
@@ -327,6 +368,7 @@ export function attachInterviewStream(
             ) {
               finishRequested = true;
               upstream.send(JSON.stringify({ type: 'finalize' }));
+              if (pendingAnswer) scheduleAnswer('');
               finishTimer = setTimeout(() => {
                 if (processingFinal || completed) return;
                 const answerCount = turns.filter(
@@ -371,6 +413,7 @@ export function attachInterviewStream(
 
       client.on('close', () => {
         clearTimeout(finishTimer);
+        clearTimeout(answerTimer);
         if (upstream.readyState === WebSocket.OPEN) {
           upstream.send(JSON.stringify({ type: 'finalize' }));
         }
