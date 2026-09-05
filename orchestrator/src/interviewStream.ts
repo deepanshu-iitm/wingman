@@ -120,6 +120,8 @@ export function attachInterviewStream(
       let completed = false;
       let finishRequested = false;
       let finishTimer: ReturnType<typeof setTimeout> | undefined;
+      let acceptingAnswer = false;
+      let acceptingAnswerSince = 0;
       let lastFinal = '';
       let coveredDimensions: InterviewDimension[] = [];
       const turns: InterviewTurn[] = [
@@ -185,10 +187,13 @@ export function attachInterviewStream(
           !answer ||
           answer === lastFinal ||
           processingFinal ||
-          completed
+          completed ||
+          !acceptingAnswer ||
+          Date.now() - acceptingAnswerSince < 350
         ) {
           return;
         }
+        acceptingAnswer = false;
         lastFinal = answer;
         clearTimeout(finishTimer);
         processingFinal = true;
@@ -312,6 +317,10 @@ export function attachInterviewStream(
               upstream.readyState === WebSocket.OPEN
             ) {
               upstream.send(JSON.stringify({ type: 'finalize' }));
+            } else if (message.type === 'ready_for_answer') {
+              acceptingAnswer = true;
+              acceptingAnswerSince = Date.now();
+              sendJson(client, { type: 'status', state: 'listening' });
             } else if (
               message.type === 'finish' &&
               upstream.readyState === WebSocket.OPEN

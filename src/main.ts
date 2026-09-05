@@ -1201,6 +1201,13 @@ type InterviewMessage = {
   persona?: PersonaDraft;
 };
 
+function armAnswerCapture() {
+  if (interviewSocket?.readyState !== WebSocket.OPEN) return;
+  interviewSocket.send(JSON.stringify({ type: "ready_for_answer" }));
+  captureEnabled = true;
+  interviewBusy = false;
+}
+
 function handleInterviewMessage(message: InterviewMessage) {
   if (message.type === "ready" && message.question) {
     transcriptTurns = [{ who: "wingman", text: message.question }];
@@ -1234,14 +1241,12 @@ function handleInterviewMessage(message: InterviewMessage) {
           !draft &&
           !personaPending
         ) {
-          captureEnabled = true;
-          interviewBusy = false;
+          armAnswerCapture();
           scheduleRender();
         }
       })
       .catch(() => {
-        captureEnabled = true;
-        interviewBusy = false;
+        armAnswerCapture();
         interviewError =
           "Voice playback failed — answer the question shown on screen.";
         scheduleRender();
@@ -1250,13 +1255,11 @@ function handleInterviewMessage(message: InterviewMessage) {
         if (speechPlayback === playback) speechPlayback = null;
       });
   } else if (message.type === "speech.unavailable") {
-    captureEnabled = true;
-    interviewBusy = false;
+    armAnswerCapture();
     interviewError =
       "Voice playback is unavailable — answer the question shown on screen.";
   } else if (message.type === "finish.rejected") {
-    captureEnabled = true;
-    interviewBusy = false;
+    armAnswerCapture();
     interviewError = message.error ?? "Answer a question before finishing.";
   } else if (message.type === "status") {
     interviewBusy = [
@@ -1334,7 +1337,8 @@ async function startVoiceInterview() {
     await audioContext.resume();
 
     const source = audioContext.createMediaStreamSource(microphoneStream);
-    audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+    // 2,048 PCM16 samples produce Smallest's recommended 4,096-byte frames.
+    audioProcessor = audioContext.createScriptProcessor(2048, 1, 1);
     const silentOutput = audioContext.createGain();
     silentOutput.gain.value = 0;
     source.connect(audioProcessor);
