@@ -55,6 +55,8 @@ type Conversation = ReturnType<DbConnection["db"]["conversation"]["iter"]> exten
   ? R
   : never;
 
+type Persona = NonNullable<ReturnType<typeof activePersona>>;
+
 // ── App state ───────────────────────────────────────────────────────────────
 let conn: DbConnection | null = null;
 let myIdentity: Identity | null = null;
@@ -446,22 +448,55 @@ function renderInterview(): string {
 }
 
 // ── 03 · What it heard ───────────────────────────────────────────────────────
+/** Stable string hash (matches characters.ts) for deterministic projections. */
+function strHash(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+/** Map a hash into an inclusive numeric range, deterministically. */
+function inRange(seed: string, lo: number, hi: number): number {
+  return lo + (strHash(seed) % (hi - lo + 1));
+}
+
+/**
+ * Trait signature and mental-model nodes are a deterministic *client-side
+ * projection* of the persona's real fields (not a backend-computed embedding —
+ * see PR #7 review, @RameshKumarS48). They stay stable per persona and shift
+ * with the actual interests / values / style the interview produced.
+ */
+function deriveTraits(p: Persona): { label: string; v: number }[] {
+  const clamp = (n: number) => Math.max(40, Math.min(93, n));
+  const nI = p.interests.length;
+  const nV = p.values.length;
+  return [
+    { label: "Openness", v: clamp(56 + nI * 5 + (strHash(p.id + "open") % 14)) },
+    { label: "Warmth", v: clamp(52 + nV * 6 + (strHash(p.id + "warm") % 12)) },
+    { label: "Wit", v: clamp(50 + (strHash(p.socialStyle + "wit") % 40)) },
+    { label: "Depth", v: clamp(48 + Math.min(24, Math.floor(p.summary.length / 12)) + (strHash(p.id + "depth") % 10)) },
+  ];
+}
+
+function deriveNodes(p: Persona): { label: string; x: number; y: number }[] {
+  const labels = (p.interests.length ? p.interests : p.values).slice(0, 4);
+  if (!labels.length) labels.push(p.socialStyle || "You");
+  return labels.map((label) => ({
+    label,
+    x: inRange(label + "x", 16, 84),
+    y: inRange(label + "y", 16, 84),
+  }));
+}
+
 function renderRead(): string {
   const p = activePersona();
   if (!p) return renderLoading("Shaping your agent…");
 
-  const traits = [
-    { label: "Openness", v: 72 },
-    { label: "Warmth", v: 64 },
-    { label: "Wit", v: 81 },
-    { label: "Depth", v: 58 },
-  ];
-  const nodes = [
-    { label: "Curious", x: 26, y: 30 },
-    { label: "Playful", x: 68, y: 24 },
-    { label: "Grounded", x: 34, y: 72 },
-    { label: "Ambitious", x: 74, y: 66 },
-  ];
+  const traits = deriveTraits(p);
+  const nodes = deriveNodes(p);
+  // "here" marker sits at the centroid of the plotted nodes.
+  const hereX = Math.round(nodes.reduce((s, n) => s + n.x, 0) / nodes.length);
+  const hereY = Math.round(nodes.reduce((s, n) => s + n.y, 0) / nodes.length);
 
   return `
   <div class="wg-screen">
@@ -514,7 +549,7 @@ function renderRead(): string {
                   `<div class="wg-map-node" style="left:${n.x}%;top:${n.y}%">${n.label}</div>`,
               )
               .join("")}
-            <div class="wg-map-here" style="left:52%;top:48%"></div>
+            <div class="wg-map-here" style="left:${hereX}%;top:${hereY}%"></div>
           </div>
         </div>
         <button class="wg-btn wg-btn-green" data-action="start-match">
@@ -972,21 +1007,32 @@ async function sendInConversation(conversationId: bigint) {
   const content = (inputDrafts[key] ?? "").trim();
   if (!content) return;
   try {
-    // sendHumanMessage requires human control — take the wheel first if needed.
-    if (
-      convo.controlMode !== "human" ||
-      convo.humanPersonaId !== activePersonaId
-    ) {
-      await conn.reducers.takeOverConversation({
+    if (convo.status === "complete") {
+      // Post-match chat (screen 09): the winning conversation is already
+      // 'complete', which takeOver/sendHuman reject. sendMatchMessage appends
+      // on top of the settled match without reopening it.
+      await conn.reducers.sendMatchMessage({
         conversationId,
         personaId: activePersonaId,
+        content,
+      });
+    } else {
+      // Live takeover (overlay): sendHumanMessage needs human control first.
+      if (
+        convo.controlMode !== "human" ||
+        convo.humanPersonaId !== activePersonaId
+      ) {
+        await conn.reducers.takeOverConversation({
+          conversationId,
+          personaId: activePersonaId,
+        });
+      }
+      await conn.reducers.sendHumanMessage({
+        conversationId,
+        personaId: activePersonaId,
+        content,
       });
     }
-    await conn.reducers.sendHumanMessage({
-      conversationId,
-      personaId: activePersonaId,
-      content,
-    });
     inputDrafts[key] = "";
   } catch (e) {
     console.error("send failed", e);
