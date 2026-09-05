@@ -133,7 +133,7 @@ export async function scoreConversation(
         rawScore: verdict.score,
         signalStrength: verdict.score,
         reason: verdict.rationale,
-        model: process.env.OPENAI_MODEL ?? 'gpt-5-nano',
+        model: process.env.OPENAI_MODEL ?? 'gpt-5.6-luna',
       };
     } catch (error) {
       console.warn('Verdict generation failed; using placeholder score.', error);

@@ -48,7 +48,7 @@ export async function requestStructuredJson<T>({
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: model ?? process.env.OPENAI_MODEL ?? 'gpt-5-nano',
+      model: model ?? process.env.OPENAI_MODEL ?? 'gpt-5.6-luna',
       messages,
       response_format: {
         type: 'json_schema',

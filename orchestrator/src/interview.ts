@@ -126,7 +126,10 @@ export async function generateInterviewStep(
       apiKey,
       schemaName: 'adaptive_interview_step',
       schema: interviewStepSchema,
-      model: process.env.OPENAI_INTERVIEW_MODEL ?? 'gpt-5-mini',
+      model:
+        process.env.OPENAI_INTERVIEW_MODEL ??
+        process.env.OPENAI_MODEL ??
+        'gpt-5.6-luna',
       fetchImpl,
       maxCompletionTokens: 4_000,
       messages: [
