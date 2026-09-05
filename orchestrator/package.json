@@ -10,8 +10,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm build && node --test test/*.test.js"
   },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
   "devDependencies": {
     "@types/node": "^22.10.5",
+    "@types/ws": "^8.5.13",
     "typescript": "^5.7.2"
   },
   "packageManager": "pnpm@11.22.0"
