@@ -25,8 +25,10 @@ import {
 import { CONFIG } from './config.js';
 import {
   generateAgentTurn,
-  plannedTurnCount,
+  minTurns,
+  maxTurns,
   scoreConversation,
+  type ConversationPhase,
   type PersonaLike,
   type Turn,
 } from './generateConversation.js';
@@ -77,6 +79,8 @@ function toPersonaLike(row: {
   interests: string[];
   values: string[];
   socialStyle: string;
+  voiceStyle?: string;
+  speechSample?: string;
 }): PersonaLike {
   return {
     id: row.id,
@@ -85,6 +89,8 @@ function toPersonaLike(row: {
     interests: [...row.interests],
     values: [...row.values],
     socialStyle: row.socialStyle,
+    voiceStyle: row.voiceStyle ?? '',
+    speechSample: row.speechSample ?? '',
   };
 }
 
@@ -177,7 +183,9 @@ async function runConversation(conn: DbConnection, sessionId: bigint, conversati
     throw new Error(`Conversation ${conversationId}: missing persona data`);
   }
 
-  const planned = plannedTurnCount();
+  const min = minTurns();
+  const max = maxTurns();
+  const startedAt = Date.now();
 
   // Rebuild history + next sequence from what's already written (resume-safe).
   const existing = currentMessages(conn, conversationId);
@@ -190,10 +198,15 @@ async function runConversation(conn: DbConnection, sessionId: bigint, conversati
     senderName: m.senderName,
     content: m.content,
     source: m.source === 'human' ? 'human' : 'agent',
+    intent: 'continue',
   }));
-  const nextSeq = existing.reduce((max, message) => Math.max(max, message.seq + 1), 0);
 
-  for (let seq = nextSeq; history.length < planned; seq++) {
+  // The conversation flows freely up to `max`, but from `min` onward it may
+  // close early the moment an agent naturally says goodbye. As it nears the
+  // ceiling or the soft time budget, we move it into the wrapping phase so the
+  // final turns are a warm sign-off — never a mid-thought cutoff.
+  const nextSeq = existing.reduce((acc, message) => Math.max(acc, message.seq + 1), 0);
+  for (let seq = nextSeq; history.length < max; seq++) {
     // Read current state before every turn: stop if finalized or taken over.
     const convo = conn.db.conversation.id.find(conversationId);
     if (!convo || convo.status === 'complete') return; // finalized elsewhere (deadline)
@@ -202,10 +215,18 @@ async function runConversation(conn: DbConnection, sessionId: bigint, conversati
       return;
     }
 
+    const softDeadlineHit = Date.now() - startedAt >= CONFIG.CONVO_SOFT_MS;
+    const nearMax = history.length >= max - 2;
+    const partnerWindingDown = history.at(-1)?.intent === 'wrapping_up';
+    const shouldWrap =
+      history.length >= min && (softDeadlineHit || nearMax || partnerWindingDown);
+    const phase: ConversationPhase =
+      history.length === 0 ? 'opening' : shouldWrap ? 'wrapping' : 'flowing';
+
     const lastSpeakerId = history.at(-1)?.senderPersonaId;
     const speaker = lastSpeakerId === a.id ? b : a;
     const counterpart = speaker.id === a.id ? b : a;
-    const turn = await generateAgentTurn(speaker, counterpart, history);
+    const turn = await generateAgentTurn(speaker, counterpart, history, phase);
 
     await conn.reducers.appendMessage({
       conversationId,
@@ -216,11 +237,14 @@ async function runConversation(conn: DbConnection, sessionId: bigint, conversati
     });
     history.push(turn);
 
-    if (seq % CONFIG.SIGNAL_UPDATE_EVERY === 0 || seq === planned - 1) {
-      const progress = (seq + 1) / planned;
+    if (seq % CONFIG.SIGNAL_UPDATE_EVERY === 0 || history.length >= max) {
+      const progress = Math.min(1, history.length / max);
       const ramped = Math.round(70 * progress);
       await conn.reducers.updateSignal({ conversationId, signalStrength: ramped });
     }
+
+    // Natural mutual close: past the floor, a goodbye ends the conversation.
+    if (turn.intent === 'closing' && history.length >= min) break;
 
     await sleep(CONFIG.PACING_MS);
   }

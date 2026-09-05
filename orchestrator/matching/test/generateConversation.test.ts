@@ -15,6 +15,8 @@ const alex: PersonaLike = {
   interests: ['music', 'hiking'],
   values: ['kindness'],
   socialStyle: 'warm',
+  voiceStyle: 'casual and upbeat, laughs a lot',
+  speechSample: "Oh man, I've just been super into building stuff lately, you know?",
 };
 
 const sam: PersonaLike = {
@@ -24,6 +26,8 @@ const sam: PersonaLike = {
   interests: ['music'],
   values: ['kindness'],
   socialStyle: 'warm',
+  voiceStyle: 'thoughtful, a little dry',
+  speechSample: 'I mean, music is kind of my whole thing, honestly.',
 };
 
 test('generateAgentTurn returns exactly the requested speaker', async () => {
@@ -46,8 +50,8 @@ test('placeholder verdict incorporates completed conversation evidence', async (
   try {
     const empty = await scoreConversation(alex, sam, []);
     const history: Turn[] = [
-      { senderPersonaId: alex.id, senderName: alex.displayName, content: 'I love live music.', source: 'agent' },
-      { senderPersonaId: sam.id, senderName: sam.displayName, content: 'Me too.', source: 'agent' },
+      { senderPersonaId: alex.id, senderName: alex.displayName, content: 'I love live music.', source: 'agent', intent: 'continue' },
+      { senderPersonaId: sam.id, senderName: sam.displayName, content: 'Me too.', source: 'agent', intent: 'continue' },
     ];
     const conversational = await scoreConversation(alex, sam, history);
     assert.ok(conversational.rawScore > empty.rawScore);
@@ -62,7 +66,7 @@ test('LLM verdict receives the transcript and validates structured output', asyn
   process.env.OPENAI_API_KEY = 'test-key';
   try {
     const history: Turn[] = [
-      { senderPersonaId: alex.id, senderName: alex.displayName, content: 'Hello Sam', source: 'agent' },
+      { senderPersonaId: alex.id, senderName: alex.displayName, content: 'Hello Sam', source: 'agent', intent: 'continue' },
     ];
     const result = await scoreConversation(alex, sam, history, async (_url, init) => {
       const request = JSON.parse(String(init?.body)) as {
@@ -96,6 +100,7 @@ test('agent generation falls back when OpenAI is temporarily unavailable', async
         alex,
         sam,
         [],
+        'flowing',
         async () => new Response('busy', { status: 503 }),
       );
       assert.equal(turn.senderPersonaId, alex.id);

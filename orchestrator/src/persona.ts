@@ -8,9 +8,15 @@ export type PersonaDraft = {
   interests: string[];
   values: string[];
   socialStyle: string;
+  /** LLM descriptor of HOW this person talks (tone, cadence, fillers, humor). */
+  voiceStyle: string;
+  /** Short verbatim excerpt from the interview, disfluencies intact. */
+  speechSample: string;
 };
 
-type ExtractedPersona = Omit<PersonaDraft, 'displayName'>;
+// speechSample is sliced verbatim from the transcript, not produced by the
+// model, so the extraction schema only covers the distilled voiceStyle.
+type ExtractedPersona = Omit<PersonaDraft, 'displayName' | 'speechSample'>;
 
 type ChatCompletionResponse = {
   choices?: Array<{
@@ -27,8 +33,9 @@ const personaSchema = {
     interests: { type: 'array', items: { type: 'string' } },
     values: { type: 'array', items: { type: 'string' } },
     socialStyle: { type: 'string' },
+    voiceStyle: { type: 'string' },
   },
-  required: ['summary', 'interests', 'values', 'socialStyle'],
+  required: ['summary', 'interests', 'values', 'socialStyle', 'voiceStyle'],
   additionalProperties: false,
 } as const;
 
@@ -94,7 +101,14 @@ export async function extractPersona(
             'Extract a concise social persona from the interview transcript. ' +
             'Use only information the person stated or directly implied. ' +
             'Do not diagnose, infer sensitive traits, or claim scientific certainty. ' +
-            'Keep the summary to two sentences and each list to at most eight short items.',
+            'Keep the summary to two sentences and each list to at most eight short items.\n\n' +
+            'Also capture "voiceStyle": a vivid description of HOW this person actually ' +
+            'talks, so a stand-in could convincingly mimic them — cadence and pacing, ' +
+            'warmth and humor, playfulness or dryness, verbosity, favorite slang or catch ' +
+            'phrases, and their characteristic filler words and disfluencies (e.g. "um", ' +
+            '"like", "you know", "I mean", trailing off). Preserve these quirks; do not ' +
+            'sanitize them. If the transcript is too thin to tell, say so plainly. ' +
+            'Two to four sentences.',
         },
         { role: 'user', content: cleanTranscript },
       ],
@@ -136,5 +150,24 @@ export async function extractPersona(
     interests: cleanList(extracted.interests),
     values: cleanList(extracted.values),
     socialStyle: cleanText(extracted.socialStyle, 'social style', 200),
+    voiceStyle: cleanText(extracted.voiceStyle, 'voice style', 400),
+    speechSample: sampleSpeech(cleanTranscript),
   };
+}
+
+/**
+ * A short verbatim excerpt of how the person actually spoke, kept intact
+ * (fillers and all) so their agent can few-shot off their real phrasing. Takes
+ * the opening of the transcript up to a sentence boundary, capped at 300 chars.
+ */
+function sampleSpeech(transcript: string): string {
+  const text = transcript.replace(/\s+/g, ' ').trim();
+  if (text.length <= 300) return text;
+  const window = text.slice(0, 300);
+  const lastBreak = Math.max(
+    window.lastIndexOf('. '),
+    window.lastIndexOf('? '),
+    window.lastIndexOf('! ')
+  );
+  return (lastBreak > 120 ? window.slice(0, lastBreak + 1) : window).trim();
 }
