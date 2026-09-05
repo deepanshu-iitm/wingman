@@ -50,6 +50,7 @@ import UpdateSignalReducer from "./update_signal_reducer";
 // Import all procedure arg schemas
 
 // Import all table schema definitions
+import ChatPresenceRow from "./chat_presence_table";
 import ConversationRow from "./conversation_table";
 import MatchResultRow from "./match_result_table";
 import MatchSessionRow from "./match_session_table";
@@ -62,6 +63,15 @@ import PublicPersonaRow from "./public_persona_table";
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
+  chatPresence: __table({
+    name: 'chat_presence',
+    indexes: [
+      { accessor: 'personaId', name: 'chat_presence_persona_id_idx_btree', algorithm: 'btree', columns: ['personaId'] },
+    ],
+    constraints: [
+      { name: 'chat_presence_persona_id_key', constraint: 'unique', columns: ['personaId'] },
+    ],
+  }, ChatPresenceRow),
   conversation: __table({
     name: 'conversation',
     indexes: [

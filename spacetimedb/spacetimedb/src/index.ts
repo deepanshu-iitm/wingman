@@ -197,6 +197,19 @@ const deadline_timer = table(
   }
 );
 
+/**
+ * Lightweight presence table. A row exists while a persona owner is connected
+ * and in the chat view; the row is deleted on disconnect via onDisconnect.
+ * Clients subscribe to this to show a live/away indicator for matched partners.
+ */
+const chat_presence = table(
+  { name: 'chat_presence', public: true },
+  {
+    personaId: t.u64().primaryKey(),
+    updatedAt: t.timestamp(),
+  }
+);
+
 const spacetimedb = schema({
   persona,
   match_session,
@@ -207,6 +220,7 @@ const spacetimedb = schema({
   conversation_archive,
   orchestrator_config,
   deadline_timer,
+  chat_presence,
 });
 export default spacetimedb;
 
@@ -221,7 +235,25 @@ export const init = spacetimedb.init(ctx => {
   });
 });
 export const onConnect = spacetimedb.clientConnected(_ctx => {});
-export const onDisconnect = spacetimedb.clientDisconnected(_ctx => {});
+export const onDisconnect = spacetimedb.clientDisconnected((ctx: Ctx) => {
+  const p = [...ctx.db.persona.owner.filter(ctx.sender)][0];
+  if (!p) return;
+  if (ctx.db.chat_presence.personaId.find(p.id)) {
+    ctx.db.chat_presence.personaId.delete(p.id);
+  }
+});
+
+/** Upsert a presence heartbeat for the calling user's persona. */
+export const pingPresence = spacetimedb.reducer((ctx: Ctx) => {
+  const p = [...ctx.db.persona.owner.filter(ctx.sender)][0];
+  if (!p) return;
+  const existing = ctx.db.chat_presence.personaId.find(p.id);
+  if (existing) {
+    ctx.db.chat_presence.personaId.update({ ...existing, updatedAt: ctx.timestamp });
+  } else {
+    ctx.db.chat_presence.insert({ personaId: p.id, updatedAt: ctx.timestamp });
+  }
+});
 
 // ── Views: scoped persona access ─────────────────────────────────────────────────
 
