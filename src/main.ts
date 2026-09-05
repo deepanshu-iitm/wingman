@@ -30,7 +30,8 @@ const ORCHESTRATOR_URL = (
   clientEnv.VITE_ORCHESTRATOR_URL ?? "http://localhost:8787"
 ).replace(/\/+$/, "");
 const TOKEN_KEY = "wingman_token";
-const MAX_RECORDING_MS = 120_000;
+const MAX_INTERVIEW_MS = 5 * 60_000;
+const INTERVIEW_SAMPLE_RATE = 16_000;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 type View =
@@ -98,6 +99,8 @@ let interviewMode: "voice" | "type" = "voice";
 let recording = false;
 let interviewBusy = false;
 let interviewError = "";
+let voiceConsent = false;
+let liveTranscript = "";
 let typeDraft = "";
 let transcriptTurns: { who: "wingman" | "me"; text: string }[] = [
   {
@@ -111,11 +114,15 @@ let draft: PersonaDraft | null = null;
 // per-conversation message drafts (takeover + post-match chat)
 const inputDrafts: Record<string, string> = {};
 
-// recorder plumbing
-let recorder: MediaRecorder | null = null;
+// live interview audio plumbing
+let interviewSocket: WebSocket | null = null;
 let microphoneStream: MediaStream | null = null;
-let audioChunks: Blob[] = [];
-let recordingTimer: ReturnType<typeof setTimeout> | undefined;
+let audioContext: AudioContext | null = null;
+let audioProcessor: ScriptProcessorNode | null = null;
+let captureEnabled = false;
+let interviewTimer: ReturnType<typeof setTimeout> | undefined;
+let speechPlayback: Promise<void> | null = null;
+let personaPending = false;
 
 // ── DOM ─────────────────────────────────────────────────────────────────────
 const app = document.getElementById("app") as HTMLDivElement;
@@ -393,6 +400,13 @@ function renderInterview(): string {
       </div>`,
     )
     .join("");
+  const partialTurn = liveTranscript
+    ? `
+      <div class="wg-turn me wg-turn-partial">
+        <div class="who">You</div>
+        <div class="said">${escapeHtml(liveTranscript)}</div>
+      </div>`
+    : "";
 
   const draftBlock = draft
     ? `
@@ -406,15 +420,32 @@ function renderInterview(): string {
     interviewMode === "voice"
       ? `
       <div class="wg-mic-panel">
-        <div class="wg-mic-orb ${recording ? "live" : ""}" data-action="mic">${recording ? "◼" : "🎙"}</div>
+        <button class="wg-mic-orb ${recording ? "live" : ""}" data-action="mic"
+          ${!voiceConsent && !recording ? "disabled" : ""}>${recording ? "✓" : "🎙"}</button>
         <div>
-          <div class="wg-h2" style="color:var(--cream)">${recording ? "Listening…" : "Tap to talk"}</div>
+          <div class="wg-h2" style="color:var(--cream)">${
+            captureEnabled
+              ? "Listening…"
+              : recording
+                ? "Wingman is responding…"
+                : "Start voice interview"
+          }</div>
           <p class="wg-lead" style="color:rgba(250,246,239,.6)">
-            ${interviewBusy ? "Thinking about what you said…" : "Say it how you'd say it to a friend."}
+            ${
+              interviewBusy
+                ? "Thinking about what you said…"
+                : recording
+                  ? "Tap ✓ when you have shared enough."
+                  : "Wingman asks aloud. Answer naturally, then pause for three seconds."
+            }
           </p>
         </div>
+        <label class="wg-consent">
+          <input type="checkbox" data-field="voice-consent" ${voiceConsent ? "checked" : ""} />
+          I consent to live transcription. Raw audio is not stored.
+        </label>
         <button class="wg-btn-ghost wg-btn wg-btn-sm" style="color:var(--cream);border-color:var(--cream)"
-          data-action="switch-type">Rather type it</button>
+          data-action="switch-type" ${recording ? "disabled" : ""}>Rather type it</button>
       </div>`
       : `
       <div class="wg-mic-panel" style="align-items:stretch">
@@ -436,7 +467,7 @@ function renderInterview(): string {
       ${micPanel}
       <div class="wg-transcript">
         <div class="wg-eyebrow">The interview</div>
-        <div class="wg-transcript-log">${log}${draftBlock}</div>
+        <div class="wg-transcript-log">${log}${partialTurn}${draftBlock}</div>
         ${
           canCreate
             ? `<button class="wg-btn" data-action="create-persona">Looks right — build my agent →</button>`
@@ -1058,6 +1089,12 @@ app.addEventListener("input", (e) => {
     if (h) h.firstChild!.textContent = t.value || "Hey there";
   } else if (t.dataset.field === "age") {
     signup.age = t.value.replace(/\D/g, "");
+  } else if (
+    t.dataset.field === "voice-consent" &&
+    t instanceof HTMLInputElement
+  ) {
+    voiceConsent = t.checked;
+    scheduleRender();
   } else if (t.dataset.field === "type") {
     typeDraft = t.value;
   } else if (t.dataset.input) {
@@ -1081,72 +1118,290 @@ app.addEventListener("click", (e) => {
   render();
 });
 
-// ── Voice recording ──────────────────────────────────────────────────────────
-function releaseMicrophone() {
-  clearTimeout(recordingTimer);
-  recordingTimer = undefined;
-  microphoneStream?.getTracks().forEach((t) => t.stop());
+// ── Live voice interview ─────────────────────────────────────────────────────
+async function releaseMicrophone() {
+  clearTimeout(interviewTimer);
+  interviewTimer = undefined;
+  captureEnabled = false;
+  audioProcessor?.disconnect();
+  audioProcessor = null;
+  microphoneStream?.getTracks().forEach((track) => track.stop());
   microphoneStream = null;
-  recorder = null;
   recording = false;
+  const context = audioContext;
+  audioContext = null;
+  if (context && context.state !== "closed") await context.close();
+}
+
+function pcm16Buffer(samples: Float32Array): ArrayBuffer {
+  const output = new ArrayBuffer(samples.length * 2);
+  const view = new DataView(output);
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[index] ?? 0));
+    view.setInt16(
+      index * 2,
+      sample < 0 ? sample * 0x8000 : sample * 0x7fff,
+      true,
+    );
+  }
+  return output;
+}
+
+function resampleTo16Khz(
+  samples: Float32Array,
+  inputSampleRate: number,
+): Float32Array {
+  if (inputSampleRate === INTERVIEW_SAMPLE_RATE) return samples;
+  const ratio = inputSampleRate / INTERVIEW_SAMPLE_RATE;
+  const output = new Float32Array(Math.round(samples.length / ratio));
+  for (let outputIndex = 0; outputIndex < output.length; outputIndex += 1) {
+    const start = Math.floor(outputIndex * ratio);
+    const end = Math.min(
+      samples.length,
+      Math.floor((outputIndex + 1) * ratio),
+    );
+    let sum = 0;
+    for (let inputIndex = start; inputIndex < end; inputIndex += 1) {
+      sum += samples[inputIndex] ?? 0;
+    }
+    output[outputIndex] = sum / Math.max(1, end - start);
+  }
+  return output;
+}
+
+function audioBufferFromBase64(audioBase64: string): ArrayBuffer {
+  return Uint8Array.from(atob(audioBase64), (character) =>
+    character.charCodeAt(0),
+  ).buffer;
+}
+
+async function playAgentSpeech(audioBase64: string): Promise<void> {
+  if (!audioContext) throw new Error("Audio context is unavailable");
+  captureEnabled = false;
+  const decoded = await audioContext.decodeAudioData(
+    audioBufferFromBase64(audioBase64),
+  );
+  const source = audioContext.createBufferSource();
+  source.buffer = decoded;
+  source.connect(audioContext.destination);
+  await new Promise<void>((resolve) => {
+    source.addEventListener("ended", () => resolve(), { once: true });
+    source.start();
+  });
+}
+
+type InterviewMessage = {
+  type?: string;
+  state?: string;
+  text?: string;
+  reply?: string;
+  question?: string;
+  error?: string;
+  audioBase64?: string;
+  persona?: PersonaDraft;
+};
+
+function armAnswerCapture() {
+  if (interviewSocket?.readyState !== WebSocket.OPEN) return;
+  interviewSocket.send(JSON.stringify({ type: "ready_for_answer" }));
+  captureEnabled = true;
+  interviewBusy = false;
+}
+
+function handleInterviewMessage(message: InterviewMessage) {
+  if (message.type === "ready" && message.question) {
+    transcriptTurns = [{ who: "wingman", text: message.question }];
+    interviewBusy = true;
+  } else if (message.type === "transcript.partial" && message.text) {
+    liveTranscript = message.text;
+    interviewBusy = false;
+  } else if (message.type === "transcript.final" && message.text) {
+    transcriptTurns.push({ who: "me", text: message.text });
+    liveTranscript = "";
+    captureEnabled = false;
+    interviewBusy = true;
+  } else if (message.type === "question" && message.question) {
+    transcriptTurns.push({
+      who: "wingman",
+      text: `${message.reply ?? ""} ${message.question}`.trim(),
+    });
+    captureEnabled = false;
+    interviewBusy = true;
+  } else if (message.type === "reply" && message.text) {
+    transcriptTurns.push({ who: "wingman", text: message.text });
+    captureEnabled = false;
+    interviewBusy = true;
+  } else if (message.type === "speech" && message.audioBase64) {
+    const playback = playAgentSpeech(message.audioBase64);
+    speechPlayback = playback;
+    void playback
+      .then(() => {
+        if (
+          interviewSocket?.readyState === WebSocket.OPEN &&
+          !draft &&
+          !personaPending
+        ) {
+          armAnswerCapture();
+          scheduleRender();
+        }
+      })
+      .catch(() => {
+        armAnswerCapture();
+        interviewError =
+          "Voice playback failed — answer the question shown on screen.";
+        scheduleRender();
+      })
+      .finally(() => {
+        if (speechPlayback === playback) speechPlayback = null;
+      });
+  } else if (message.type === "speech.unavailable") {
+    armAnswerCapture();
+    interviewError =
+      "Voice playback is unavailable — answer the question shown on screen.";
+  } else if (message.type === "finish.rejected") {
+    armAnswerCapture();
+    interviewError = message.error ?? "Answer a question before finishing.";
+  } else if (message.type === "status") {
+    interviewBusy = [
+      "thinking",
+      "generating_speech",
+      "creating_persona",
+    ].includes(message.state ?? "");
+  } else if (message.type === "persona" && message.persona) {
+    personaPending = true;
+    const persona = message.persona;
+    void (async () => {
+      try {
+        await speechPlayback;
+      } catch {
+        // The text response remains visible when audio playback fails.
+      }
+      draft = {
+        ...persona,
+        displayName: persona.displayName || signup.name.trim(),
+      };
+      personaPending = false;
+      interviewBusy = false;
+      await releaseMicrophone();
+      interviewSocket?.close();
+      interviewSocket = null;
+      scheduleRender();
+    })();
+  } else if (message.type === "error") {
+    interviewBusy = false;
+    interviewError =
+      message.error ?? "Voice interview failed. Please try again.";
+  }
+  scheduleRender();
 }
 
 function toggleRecording() {
   if (recording) {
-    if (recorder?.state === "recording") recorder.stop();
+    if (interviewSocket?.readyState !== WebSocket.OPEN) return;
+    captureEnabled = false;
+    interviewBusy = true;
+    interviewSocket.send(JSON.stringify({ type: "finish" }));
+    scheduleRender();
     return;
   }
-  void startRecording();
+  void startVoiceInterview();
 }
 
-async function startRecording() {
+async function startVoiceInterview() {
   interviewError = "";
-  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+  liveTranscript = "";
+  personaPending = false;
+  if (!voiceConsent) {
+    interviewError = "Confirm voice transcription consent before starting.";
+    scheduleRender();
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || !window.AudioContext) {
     interviewError =
-      "Voice recording isn't available in this browser — type it instead.";
+      "Live voice isn't available in this browser — type it instead.";
     interviewMode = "type";
     scheduleRender();
     return;
   }
-  const supportedType = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/ogg;codecs=opus",
-    "audio/mp4",
-  ].find((type) => MediaRecorder.isTypeSupported(type));
 
   try {
     microphoneStream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
     });
-    audioChunks = [];
-    recorder = new MediaRecorder(
-      microphoneStream,
-      supportedType ? { mimeType: supportedType } : undefined,
+    audioContext = new AudioContext({ sampleRate: INTERVIEW_SAMPLE_RATE });
+    await audioContext.resume();
+
+    const source = audioContext.createMediaStreamSource(microphoneStream);
+    // 2,048 PCM16 samples produce Smallest's recommended 4,096-byte frames.
+    audioProcessor = audioContext.createScriptProcessor(2048, 1, 1);
+    const silentOutput = audioContext.createGain();
+    silentOutput.gain.value = 0;
+    source.connect(audioProcessor);
+    audioProcessor.connect(silentOutput);
+    silentOutput.connect(audioContext.destination);
+
+    const socketUrl = new URL(
+      ORCHESTRATOR_URL.replace(/^http/, "ws") + "/api/interview/stream",
     );
-    recorder.addEventListener("dataavailable", (ev) => {
-      if (ev.data.size > 0) audioChunks.push(ev.data);
-    });
-    recorder.addEventListener("stop", () => {
-      const mimeType = recorder?.mimeType || "application/octet-stream";
-      const chunks = audioChunks;
-      releaseMicrophone();
-      scheduleRender();
-      if (chunks.length === 0) {
-        interviewError = "No audio captured — try again.";
-        scheduleRender();
+    socketUrl.searchParams.set("displayName", signup.name.trim());
+    socketUrl.searchParams.set("language", "en");
+    interviewSocket = new WebSocket(socketUrl);
+
+    audioProcessor.addEventListener("audioprocess", (event) => {
+      if (
+        !captureEnabled ||
+        interviewSocket?.readyState !== WebSocket.OPEN
+      ) {
         return;
       }
-      void buildPersonaFromRecording(new Blob(chunks, { type: mimeType }));
+      const samples = resampleTo16Khz(
+        event.inputBuffer.getChannelData(0),
+        event.inputBuffer.sampleRate,
+      );
+      interviewSocket.send(pcm16Buffer(samples));
     });
-    recorder.start();
+    interviewSocket.addEventListener("message", (event) => {
+      if (typeof event.data !== "string") return;
+      try {
+        handleInterviewMessage(JSON.parse(event.data) as InterviewMessage);
+      } catch {
+        interviewError = "Wingman sent an invalid interview response.";
+        scheduleRender();
+      }
+    });
+    interviewSocket.addEventListener("error", () => {
+      interviewError = "Could not connect to the live voice interview.";
+      interviewBusy = false;
+      void releaseMicrophone();
+      scheduleRender();
+    });
+    interviewSocket.addEventListener("close", () => {
+      if (!recording) return;
+      void releaseMicrophone();
+      if (!draft && !interviewError) {
+        interviewError = "The live voice interview disconnected.";
+      }
+      scheduleRender();
+    });
+
     recording = true;
-    recordingTimer = setTimeout(() => {
-      if (recorder?.state === "recording") recorder.stop();
-    }, MAX_RECORDING_MS);
+    interviewBusy = true;
+    interviewTimer = setTimeout(() => {
+      if (interviewSocket?.readyState === WebSocket.OPEN) {
+        captureEnabled = false;
+        interviewSocket.send(JSON.stringify({ type: "finish" }));
+      }
+    }, MAX_INTERVIEW_MS);
     scheduleRender();
   } catch {
-    releaseMicrophone();
+    await releaseMicrophone();
+    interviewSocket?.close();
+    interviewSocket = null;
     interviewError =
       "Microphone blocked. Allow access and retry, or type it instead.";
     scheduleRender();
@@ -1167,31 +1422,6 @@ async function readApiResponse<T>(
     throw new Error(typeof result.error === "string" ? result.error : fallback);
   }
   return result as T;
-}
-
-async function buildPersonaFromRecording(audio: Blob) {
-  interviewBusy = true;
-  interviewError = "";
-  scheduleRender();
-  try {
-    const res = await fetch(`${ORCHESTRATOR_URL}/api/transcribe?language=en`, {
-      method: "POST",
-      headers: { "Content-Type": audio.type || "application/octet-stream" },
-      body: audio,
-    });
-    const { transcript } = await readApiResponse<{ transcript: string }>(
-      res,
-      "Transcription failed. Please try again.",
-    );
-    transcriptTurns.push({ who: "me", text: transcript });
-    await extractPersona(transcript);
-  } catch (e) {
-    interviewError =
-      e instanceof Error ? e.message : "Voice onboarding failed.";
-  } finally {
-    interviewBusy = false;
-    scheduleRender();
-  }
 }
 
 async function buildPersonaFromText(text: string) {

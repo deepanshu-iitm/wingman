@@ -5,6 +5,7 @@ import {
 } from 'node:http';
 import { readFile } from 'node:fs/promises';
 
+import { attachInterviewStream } from './interviewStream.js';
 import { extractPersona, PersonaExtractionError } from './persona.js';
 import { TranscriptionError, transcribeAudio } from './smallest.js';
 
@@ -197,6 +198,8 @@ const server = createServer(async (request, response) => {
 
   sendJson(response, 404, { error: 'Not found' });
 });
+
+attachInterviewStream(server, { clientOrigin });
 
 server.listen(port, () => {
   console.log(`Wingman orchestrator listening on http://localhost:${port}`);

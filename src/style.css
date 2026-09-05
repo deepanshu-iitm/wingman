@@ -397,6 +397,25 @@ textarea.wg-input {
 .wg-mic-orb.live {
   animation: wgPulse 1.4s ease-in-out infinite;
 }
+.wg-mic-orb:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.6);
+  opacity: 0.5;
+}
+.wg-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 300px;
+  color: rgba(250, 246, 239, 0.72);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+}
+.wg-consent input {
+  margin-top: 2px;
+  flex: none;
+}
 .wg-transcript {
   background: var(--cream);
   border: 1.5px solid var(--ink);
@@ -439,6 +458,10 @@ textarea.wg-input {
 }
 .wg-turn.me .said {
   color: var(--muted);
+}
+.wg-turn-partial .said {
+  font-style: italic;
+  opacity: 0.72;
 }
 @media (max-width: 860px) {
   .wg-interview {
