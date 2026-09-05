@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build and test output
+dist/
+build/
+coverage/
+target/
+*.wasm
+
+# Local SpacetimeDB configuration and state
+spacetime.local.json
+.spacetime/
+
+# Environment files and logs
+.env
+.env.*
+!.env.example
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+

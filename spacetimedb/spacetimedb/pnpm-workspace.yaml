@@ -1,0 +1,2 @@
+minimumReleaseAgeExclude:
+  - spacetimedb@2.10.0
