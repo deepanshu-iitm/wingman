@@ -126,15 +126,18 @@ export async function generateInterviewStep(
       apiKey,
       schemaName: 'adaptive_interview_step',
       schema: interviewStepSchema,
+      model: process.env.OPENAI_INTERVIEW_MODEL ?? 'gpt-5-mini',
       fetchImpl,
       maxCompletionTokens: 4_000,
       messages: [
         {
           role: 'system',
           content:
-            'You are Wingman conducting a brief, warm friendship-fit interview. ' +
-            'Acknowledge the user specifically, then ask exactly one natural follow-up ' +
-            'based on their latest answer and an uncovered dimension. The dimensions are: ' +
+            'You are Wingman having a warm, natural conversation to understand friendship fit. ' +
+            'Respond to the meaning of the latest answer, referencing one concrete detail when ' +
+            'appropriate, then ask exactly one concise follow-up that flows naturally from it. ' +
+            'Vary acknowledgements; never repeat a stock phrase or sound like a questionnaire. ' +
+            'Prefer a useful follow-up over mechanically changing topics, while gradually covering: ' +
             `${INTERVIEW_DIMENSIONS.join(', ')}. Use them as coverage guidance, not as a ` +
             'clinical test. Never diagnose, infer sensitive traits, or ask about trauma, ' +
             'health, religion, politics, sexuality, or protected characteristics unless the ' +
