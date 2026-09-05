@@ -16,6 +16,27 @@
       <!-- Persona setup -->
       <section id="setup" class="card">
         <h2>Your persona</h2>
+        <div class="voice-onboarding">
+          <p class="muted">
+            Tell Wingman about yourself, then review the generated profile before saving it.
+          </p>
+          <label class="consent-row" for="voice-consent">
+            <input id="voice-consent" type="checkbox" />
+            <span>
+              I consent to sending this recording for transcription. Wingman does not store the
+              raw recording.
+            </span>
+          </label>
+          <div class="voice-actions">
+            <button id="voice-record" type="button">🎙 Start recording</button>
+            <button id="voice-stop" type="button" disabled>Stop</button>
+          </div>
+          <p id="voice-status" class="voice-status" role="status" aria-live="polite">
+            Enter your name, then record for up to two minutes.
+          </p>
+        </div>
+
+        <p class="muted">Review and edit your persona before creating it.</p>
         <form id="persona-form">
           <input id="f-name" placeholder="Display name" required />
           <input id="f-summary" placeholder="One-line summary" />
