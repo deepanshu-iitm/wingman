@@ -1,22 +1,16 @@
 import type { ConversationMessage } from './agent.js';
+import {
+  requestStructuredJson,
+  StructuredCompletionError,
+  type FetchLike,
+} from './openai.js';
 import type { PersonaDraft } from './persona.js';
 
-const CHAT_COMPLETIONS_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
 const maxHistoryMessages = 16;
-
-type Fetch = typeof fetch;
 
 export type CompatibilityVerdict = {
   score: number;
   rationale: string;
-};
-
-type ChatCompletionResponse = {
-  choices?: Array<{
-    message?: {
-      content?: unknown;
-    };
-  }>;
 };
 
 const verdictSchema = {
@@ -44,7 +38,7 @@ export async function generateVerdict(
   secondPersona: PersonaDraft,
   history: ConversationMessage[],
   apiKey: string,
-  fetchImpl: Fetch = fetch
+  fetchImpl: FetchLike = fetch
 ): Promise<CompatibilityVerdict> {
   if (history.length === 0) {
     throw new VerdictError('A conversation is required for a verdict', 400);
@@ -60,14 +54,15 @@ export async function generateVerdict(
     throw new VerdictError('Conversation contains an invalid message', 400);
   }
 
-  const response = await fetchImpl(CHAT_COMPLETIONS_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: process.env.OPENAI_MODEL ?? 'gpt-5-nano',
+  let parsed: { score?: unknown; rationale?: unknown };
+  try {
+    parsed = await requestStructuredJson<{
+      score?: unknown;
+      rationale?: unknown;
+    }>({
+      apiKey,
+      schemaName: 'compatibility_verdict',
+      schema: verdictSchema,
       messages: [
         {
           role: 'system',
@@ -86,39 +81,13 @@ export async function generateVerdict(
           }),
         },
       ],
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'compatibility_verdict',
-          strict: true,
-          schema: verdictSchema,
-        },
-      },
-      max_completion_tokens: 2_000,
-    }),
-    signal: AbortSignal.timeout(60_000),
-  });
-
-  if (!response.ok) {
-    throw new VerdictError(
-      `Verdict generation failed with status ${response.status}`
-    );
-  }
-
-  const payload = (await response.json()) as ChatCompletionResponse;
-  const content = payload.choices?.[0]?.message?.content;
-  if (typeof content !== 'string' || content.length === 0) {
-    throw new VerdictError('Model returned no verdict');
-  }
-
-  let parsed: { score?: unknown; rationale?: unknown };
-  try {
-    parsed = JSON.parse(content) as {
-      score?: unknown;
-      rationale?: unknown;
-    };
-  } catch {
-    throw new VerdictError('Model returned invalid verdict JSON');
+      fetchImpl,
+    });
+  } catch (error) {
+    if (error instanceof StructuredCompletionError) {
+      throw new VerdictError(error.message, error.status);
+    }
+    throw error;
   }
 
   if (

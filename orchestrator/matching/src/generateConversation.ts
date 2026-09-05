@@ -70,21 +70,27 @@ export async function generateAgentTurn(
   speaker: PersonaLike,
   counterpart: PersonaLike,
   history: Turn[],
+  fetchImpl: Fetch = fetch,
 ): Promise<Turn> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (apiKey) {
-    const result = await generateOpenAIAgentTurn(
-      speaker,
-      counterpart.displayName,
-      history.map(toConversationMessage),
-      apiKey,
-    );
-    return {
-      senderPersonaId: speaker.id,
-      senderName: speaker.displayName,
-      content: result.message,
-      source: 'agent',
-    };
+    try {
+      const result = await generateOpenAIAgentTurn(
+        speaker,
+        counterpart.displayName,
+        history.map(toConversationMessage),
+        apiKey,
+        fetchImpl,
+      );
+      return {
+        senderPersonaId: speaker.id,
+        senderName: speaker.displayName,
+        content: result.message,
+        source: 'agent',
+      };
+    } catch (error) {
+      console.warn('Agent generation failed; using placeholder turn.', error);
+    }
   }
 
   const content = placeholderTurn(speaker, counterpart, history.length);
@@ -115,19 +121,23 @@ export async function scoreConversation(
 ): Promise<ConversationScore> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (apiKey) {
-    const verdict = await generateVerdict(
-      toPersonaDraft(a),
-      toPersonaDraft(b),
-      history.map(toConversationMessage),
-      apiKey,
-      fetchImpl,
-    );
-    return {
-      rawScore: verdict.score,
-      signalStrength: verdict.score,
-      reason: verdict.rationale,
-      model: process.env.OPENAI_MODEL ?? 'gpt-5-nano',
-    };
+    try {
+      const verdict = await generateVerdict(
+        toPersonaDraft(a),
+        toPersonaDraft(b),
+        history.map(toConversationMessage),
+        apiKey,
+        fetchImpl,
+      );
+      return {
+        rawScore: verdict.score,
+        signalStrength: verdict.score,
+        reason: verdict.rationale,
+        model: process.env.OPENAI_MODEL ?? 'gpt-5-nano',
+      };
+    } catch (error) {
+      console.warn('Verdict generation failed; using placeholder score.', error);
+    }
   }
 
   return scorePlaceholder(a, b, history);
