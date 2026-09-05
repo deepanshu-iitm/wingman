@@ -11,5 +11,6 @@ import {
 } from "spacetimedb";
 
 export default {
-  name: __t.string(),
+  conversationId: __t.u64(),
+  personaId: __t.u64(),
 };

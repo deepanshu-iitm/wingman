@@ -10,4 +10,7 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default {};
+export default {
+  conversationId: __t.u64(),
+  personaId: __t.u64(),
+};

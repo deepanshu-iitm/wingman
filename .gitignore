@@ -12,6 +12,10 @@ target/
 spacetime.local.json
 .spacetime/
 
+# Orchestrator service identity token (never commit)
+.orchestrator-token
+**/.orchestrator-token
+
 # Environment files and logs
 .env
 .env.*
