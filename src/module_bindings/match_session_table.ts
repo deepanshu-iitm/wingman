@@ -13,6 +13,7 @@ import {
 export default __t.row({
   id: __t.u64().primaryKey(),
   owner: __t.identity(),
+  orchestratorIdentity: __t.identity().name("orchestrator_identity"),
   initiatorPersonaId: __t.u64().name("initiator_persona_id"),
   status: __t.string(),
   totalConversations: __t.u32().name("total_conversations"),
