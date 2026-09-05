@@ -13,6 +13,8 @@ import {
 export default __t.row({
   id: __t.u64().primaryKey(),
   sessionId: __t.u64().name("session_id"),
+  owner: __t.identity(),
+  orchestratorIdentity: __t.identity().name("orchestrator_identity"),
   partnerPersonaId: __t.u64().name("partner_persona_id"),
   partnerDisplayName: __t.string().name("partner_display_name"),
   rank: __t.u32(),
