@@ -71,7 +71,7 @@ const match_session = table(
   }
 );
 
-/** One per pair; carries live signal strength, the raw score, and final rank. */
+/** One per pair; carries public live state and final rank. */
 const conversation = table(
   { name: 'conversation', public: true },
   {
@@ -83,11 +83,21 @@ const conversation = table(
     status: t.string(), // 'pending' | 'active' | 'complete'
     signalStrength: t.u32(), // 0..100 — live directional indicator (NOT a %match)
     turnCount: t.u32(),
-    rawScore: t.option(t.u32()), // internal ranking + training signal; not shown
+    controlMode: t.string(), // 'agent' | 'human'
+    humanPersonaId: t.option(t.u64()),
     reason: t.option(t.string()),
     rank: t.option(t.u32()),
     createdAt: t.timestamp(),
     updatedAt: t.timestamp(),
+  }
+);
+
+/** Private scoring state, separated from the public conversation projection. */
+const conversation_score = table(
+  { name: 'conversation_score', public: false },
+  {
+    conversationId: t.u64().primaryKey(),
+    rawScore: t.u32(),
   }
 );
 
@@ -141,15 +151,16 @@ const conversation_archive = table(
 );
 
 /**
- * Single-row config holding the authorized orchestrator identity. Private.
- * Populated once via `registerOrchestrator` (trust-on-first-use for the demo;
- * in production this should be admin-provisioned).
+ * Single-row config holding the module admin and authorized orchestrator.
+ * The publishing identity is recorded during init and is the only identity
+ * allowed to provision the worker.
  */
 const orchestrator_config = table(
   { name: 'orchestrator_config', public: false },
   {
     id: t.u8().primaryKey(), // always 0 — single row
-    orchestratorIdentity: t.identity(),
+    adminIdentity: t.identity(),
+    orchestratorIdentity: t.option(t.identity()),
   }
 );
 
@@ -170,6 +181,7 @@ const spacetimedb = schema({
   persona,
   match_session,
   conversation,
+  conversation_score,
   message,
   match_result,
   conversation_archive,
@@ -181,7 +193,13 @@ export default spacetimedb;
 type Ctx = ReducerCtx<InferSchema<typeof spacetimedb>>;
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
-export const init = spacetimedb.init(_ctx => {});
+export const init = spacetimedb.init(ctx => {
+  ctx.db.orchestrator_config.insert({
+    id: 0,
+    adminIdentity: ctx.sender,
+    orchestratorIdentity: undefined,
+  });
+});
 export const onConnect = spacetimedb.clientConnected(_ctx => {});
 export const onDisconnect = spacetimedb.clientDisconnected(_ctx => {});
 
@@ -218,7 +236,7 @@ export const orchestratorPersona = spacetimedb.view(
   t.array(persona.rowType),
   (ctx) => {
     const cfg = ctx.db.orchestrator_config.id.find(0);
-    return cfg && cfg.orchestratorIdentity.equals(ctx.sender)
+    return cfg?.orchestratorIdentity?.equals(ctx.sender)
       ? [...ctx.db.persona.iter()]
       : [];
   }
@@ -232,26 +250,28 @@ export const orchestratorPersona = spacetimedb.view(
  */
 function requireOrchestrator(ctx: Ctx): void {
   const cfg = ctx.db.orchestrator_config.id.find(0);
-  if (!cfg || !cfg.orchestratorIdentity.equals(ctx.sender)) {
+  if (!cfg?.orchestratorIdentity?.equals(ctx.sender)) {
     throw new SenderError('unauthorized: orchestrator only');
   }
 }
 
 /**
- * Register the calling identity as THE orchestrator (trust-on-first-use).
- * Idempotent for the same identity; rejects a second, different registrant.
- * Production hardening: replace TOFU with an admin-provisioned identity.
+ * Provision the worker identity. Only the module publisher recorded at init
+ * may set or rotate it.
  */
-export const registerOrchestrator = spacetimedb.reducer((ctx) => {
-  const existing = ctx.db.orchestrator_config.id.find(0);
-  if (existing) {
-    if (!existing.orchestratorIdentity.equals(ctx.sender)) {
-      throw new SenderError('orchestrator already registered');
+export const registerOrchestrator = spacetimedb.reducer(
+  { orchestratorIdentity: t.identity() },
+  (ctx, { orchestratorIdentity }) => {
+    const config = ctx.db.orchestrator_config.id.find(0);
+    if (!config || !config.adminIdentity.equals(ctx.sender)) {
+      throw new SenderError('unauthorized: module admin only');
     }
-    return; // idempotent re-register by the same service
+    ctx.db.orchestrator_config.id.update({
+      ...config,
+      orchestratorIdentity,
+    });
   }
-  ctx.db.orchestrator_config.insert({ id: 0, orchestratorIdentity: ctx.sender });
-});
+);
 
 // ── Finalize (shared by normal finish + watchdog) ────────────────────────────────
 /**
@@ -269,15 +289,25 @@ function finalizeSessionInternal(ctx: Ctx, sessionId: bigint, timedOut: boolean)
 
   const total = Number(session.totalConversations);
   const convos = [...ctx.db.conversation.sessionId.filter(sessionId)]
-    .filter(c => c.status === 'complete' && c.rawScore !== undefined)
-    .sort((a, b) => (b.rawScore as number) - (a.rawScore as number));
+    .filter(c => c.status === 'complete')
+    .map(conversation => ({
+      conversation,
+      score: ctx.db.conversation_score.conversationId.find(conversation.id),
+    }))
+    .filter(
+      (entry): entry is {
+        conversation: typeof entry.conversation;
+        score: NonNullable<typeof entry.score>;
+      } => entry.score !== undefined
+    )
+    .sort((a, b) => b.score.rawScore - a.score.rawScore);
 
   // Normal path waits for a complete run; the watchdog finalizes partials.
   if (!timedOut && convos.length < total) return;
 
   const topN = Math.min(TOP_N_RESULTS, convos.length);
   for (let i = 0; i < convos.length; i++) {
-    const c = convos[i];
+    const c = convos[i].conversation;
     ctx.db.conversation.id.update({
       ...c,
       rank: i + 1,
@@ -377,7 +407,8 @@ export const startMatch = spacetimedb.reducer(
         status: 'pending',
         signalStrength: 0,
         turnCount: 0,
-        rawScore: undefined,
+        controlMode: 'agent',
+        humanPersonaId: undefined,
         reason: undefined,
         rank: undefined,
         createdAt: now,
@@ -403,14 +434,14 @@ export const appendMessage = spacetimedb.reducer(
     senderPersonaId: t.u64(),
     senderName: t.string(),
     content: t.string(),
-    source: t.string(),
     seq: t.u32(),
   },
-  (ctx, { conversationId, senderPersonaId, senderName, content, source, seq }) => {
+  (ctx, { conversationId, senderPersonaId, senderName, content, seq }) => {
     requireOrchestrator(ctx);
     const convo = ctx.db.conversation.id.find(conversationId);
     if (!convo) throw new SenderError('conversation not found');
     if (convo.status === 'complete') return; // late write, ignore
+    if (convo.controlMode === 'human') return; // takeover won the race
     if (content.length > MAX_MESSAGE_LEN) throw new SenderError('message too long');
 
     // Idempotency: one message per (conversationId, seq).
@@ -424,7 +455,7 @@ export const appendMessage = spacetimedb.reducer(
       senderPersonaId,
       senderName,
       content,
-      source,
+      source: 'agent',
       seq,
       createdAt: ctx.timestamp,
     });
@@ -465,12 +496,112 @@ export const completeConversation = spacetimedb.reducer(
     const convo = ctx.db.conversation.id.find(conversationId);
     if (!convo) throw new SenderError('conversation not found');
     if (convo.status === 'complete') return;
+    if (convo.controlMode === 'human') return;
+    const clampedRawScore = Math.max(0, Math.min(100, rawScore));
+    const existingScore = ctx.db.conversation_score.conversationId.find(conversationId);
+    if (existingScore) {
+      ctx.db.conversation_score.conversationId.update({
+        ...existingScore,
+        rawScore: clampedRawScore,
+      });
+    } else {
+      ctx.db.conversation_score.insert({ conversationId, rawScore: clampedRawScore });
+    }
     ctx.db.conversation.id.update({
       ...convo,
       status: 'complete',
-      rawScore: Math.max(0, Math.min(100, rawScore)),
       signalStrength: Math.max(0, Math.min(100, signalStrength)),
       reason,
+      updatedAt: ctx.timestamp,
+    });
+  }
+);
+
+function requireParticipant(
+  ctx: Ctx,
+  conversationId: bigint,
+  personaId: bigint
+) {
+  const convo = ctx.db.conversation.id.find(conversationId);
+  if (!convo) throw new SenderError('conversation not found');
+  if (convo.status === 'complete') throw new SenderError('conversation is complete');
+  if (
+    personaId !== convo.initiatorPersonaId &&
+    personaId !== convo.partnerPersonaId
+  ) {
+    throw new SenderError('persona is not part of this conversation');
+  }
+  const participant = ctx.db.persona.id.find(personaId);
+  if (!participant || !participant.owner.equals(ctx.sender)) {
+    throw new SenderError('not your persona');
+  }
+  return { convo, participant };
+}
+
+export const takeOverConversation = spacetimedb.reducer(
+  { conversationId: t.u64(), personaId: t.u64() },
+  (ctx, { conversationId, personaId }) => {
+    const { convo } = requireParticipant(ctx, conversationId, personaId);
+    ctx.db.conversation.id.update({
+      ...convo,
+      status: 'active',
+      controlMode: 'human',
+      humanPersonaId: personaId,
+      updatedAt: ctx.timestamp,
+    });
+  }
+);
+
+export const sendHumanMessage = spacetimedb.reducer(
+  { conversationId: t.u64(), personaId: t.u64(), content: t.string() },
+  (ctx, { conversationId, personaId, content }) => {
+    const { convo, participant } = requireParticipant(ctx, conversationId, personaId);
+    if (
+      convo.controlMode !== 'human' ||
+      convo.humanPersonaId !== personaId
+    ) {
+      throw new SenderError('take over this conversation first');
+    }
+    const trimmed = content.trim();
+    if (trimmed.length === 0) throw new SenderError('message required');
+    if (trimmed.length > MAX_MESSAGE_LEN) throw new SenderError('message too long');
+
+    const nextSeq = [...ctx.db.message.conversationId.filter(conversationId)]
+      .reduce((max, row) => Math.max(max, row.seq + 1), 0);
+    ctx.db.message.insert({
+      id: 0n,
+      conversationId,
+      sessionId: convo.sessionId,
+      senderPersonaId: personaId,
+      senderName: participant.displayName,
+      content: trimmed,
+      source: 'human',
+      seq: nextSeq,
+      createdAt: ctx.timestamp,
+    });
+    ctx.db.conversation.id.update({
+      ...convo,
+      status: 'active',
+      turnCount: nextSeq + 1,
+      updatedAt: ctx.timestamp,
+    });
+  }
+);
+
+export const releaseConversation = spacetimedb.reducer(
+  { conversationId: t.u64(), personaId: t.u64() },
+  (ctx, { conversationId, personaId }) => {
+    const { convo } = requireParticipant(ctx, conversationId, personaId);
+    if (
+      convo.controlMode !== 'human' ||
+      convo.humanPersonaId !== personaId
+    ) {
+      throw new SenderError('you do not control this conversation');
+    }
+    ctx.db.conversation.id.update({
+      ...convo,
+      controlMode: 'agent',
+      humanPersonaId: undefined,
       updatedAt: ctx.timestamp,
     });
   }

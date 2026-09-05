@@ -10,10 +10,14 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default {
-  conversationId: __t.u64(),
-  senderPersonaId: __t.u64(),
-  senderName: __t.string(),
+export default __t.row({
+  id: __t.u64().primaryKey(),
+  conversationId: __t.u64().name("conversation_id"),
+  sessionId: __t.u64().name("session_id"),
+  senderPersonaId: __t.u64().name("sender_persona_id"),
+  senderName: __t.string().name("sender_name"),
   content: __t.string(),
+  source: __t.string(),
   seq: __t.u32(),
-};
+  createdAt: __t.timestamp().name("created_at"),
+});

@@ -11,9 +11,9 @@ import {
 } from "spacetimedb";
 
 export default {
-  conversationId: __t.u64(),
-  senderPersonaId: __t.u64(),
-  senderName: __t.string(),
-  content: __t.string(),
-  seq: __t.u32(),
+  displayName: __t.string(),
+  summary: __t.string(),
+  interests: __t.array(__t.string()),
+  values: __t.array(__t.string()),
+  socialStyle: __t.string(),
 };
