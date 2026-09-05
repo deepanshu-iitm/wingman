@@ -1,13 +1,17 @@
 /**
  * Wingman — "Match Me" agent matching engine (SpacetimeDB module).
  *
- * The module owns ALL durable state and the ranking/calibration math.
- * It never calls an LLM (reducers are deterministic, no network I/O) — the
- * matching orchestrator service generates conversations and writes them back
- * through the reducers below.
+ * The module owns ALL durable state and the ranking math. It never calls an LLM
+ * (reducers are deterministic, no network I/O) — the matching orchestrator
+ * service generates conversations and writes them back through the reducers
+ * below.
  *
  * Naming: schema keys + table `name` are snake_case (SQL + ctx.db accessor);
  * columns are camelCase. Status fields are plain strings compared with `===`.
+ *
+ * Product note: we show only ranked matches ("top match" / "top 3"), NOT a
+ * compatibility percentage. Raw scores are kept internally for ranking and for
+ * training data, but are never surfaced as a "% compatible" number.
  */
 
 import {
@@ -24,12 +28,21 @@ import { ScheduleAt } from 'spacetimedb';
 const MATCH_DEADLINE_MICROS = 180_000_000n; // 3 minutes
 const MAX_MESSAGE_LEN = 2000;
 const TOP_N_RESULTS = 3;
+const MAX_MATCH_CANDIDATES = 25; // cap fan-out (and downstream LLM cost) per click
 
 // ── Tables ────────────────────────────────────────────────────────────────────
 
-/** The agents. Shared contract with the persona-extraction side (PersonaDraft). */
+/**
+ * The agents. PRIVATE — full persona data (summary, interests, values, social
+ * style, owner identity) is never client-readable directly. Clients read it
+ * through the scoped views below:
+ *   • `my_persona`           — the owner's own full personas,
+ *   • `public_persona`       — a minimal spectator projection (id/name/status),
+ *   • `orchestrator_persona` — full data, only to the registered orchestrator.
+ * Shared contract with the persona-extraction side (PersonaDraft).
+ */
 const persona = table(
-  { name: 'persona', public: true },
+  { name: 'persona', public: false },
   {
     id: t.u64().primaryKey().autoInc(),
     owner: t.identity().index('btree'),
@@ -50,7 +63,7 @@ const match_session = table(
     id: t.u64().primaryKey().autoInc(),
     owner: t.identity(),
     initiatorPersonaId: t.u64(),
-    status: t.string(), // 'matching' | 'complete'
+    status: t.string(), // 'matching' | 'complete' | 'timed_out'
     totalConversations: t.u32(),
     startedAt: t.timestamp(),
     deadlineMicros: t.u64(),
@@ -58,7 +71,7 @@ const match_session = table(
   }
 );
 
-/** One per pair; carries live signal strength, final scores, and rank. */
+/** One per pair; carries live signal strength, the raw score, and final rank. */
 const conversation = table(
   { name: 'conversation', public: true },
   {
@@ -68,10 +81,9 @@ const conversation = table(
     partnerPersonaId: t.u64(),
     partnerDisplayName: t.string(),
     status: t.string(), // 'pending' | 'active' | 'complete'
-    signalStrength: t.u32(), // 0..100
+    signalStrength: t.u32(), // 0..100 — live directional indicator (NOT a %match)
     turnCount: t.u32(),
-    rawScore: t.option(t.u32()),
-    displayScore: t.option(t.u32()),
+    rawScore: t.option(t.u32()), // internal ranking + training signal; not shown
     reason: t.option(t.string()),
     rank: t.option(t.u32()),
     createdAt: t.timestamp(),
@@ -79,7 +91,7 @@ const conversation = table(
   }
 );
 
-/** Streamed chat turns. */
+/** Streamed chat turns. `source` 'human' marks a takeover turn. */
 const message = table(
   { name: 'message', public: true },
   {
@@ -95,7 +107,7 @@ const message = table(
   }
 );
 
-/** The top-3 output. */
+/** The top-N output — a pure ranking (no compatibility percentage). */
 const match_result = table(
   { name: 'match_result', public: true },
   {
@@ -104,7 +116,6 @@ const match_result = table(
     partnerPersonaId: t.u64(),
     partnerDisplayName: t.string(),
     rank: t.u32(),
-    displayScore: t.u32(),
     reason: t.string(),
     conversationId: t.u64(),
     createdAt: t.timestamp(),
@@ -129,6 +140,19 @@ const conversation_archive = table(
   }
 );
 
+/**
+ * Single-row config holding the authorized orchestrator identity. Private.
+ * Populated once via `registerOrchestrator` (trust-on-first-use for the demo;
+ * in production this should be admin-provisioned).
+ */
+const orchestrator_config = table(
+  { name: 'orchestrator_config', public: false },
+  {
+    id: t.u8().primaryKey(), // always 0 — single row
+    orchestratorIdentity: t.identity(),
+  }
+);
+
 /** Scheduled 3-minute watchdog. Private. */
 const deadline_timer = table(
   {
@@ -149,6 +173,7 @@ const spacetimedb = schema({
   message,
   match_result,
   conversation_archive,
+  orchestrator_config,
   deadline_timer,
 });
 export default spacetimedb;
@@ -160,48 +185,101 @@ export const init = spacetimedb.init(_ctx => {});
 export const onConnect = spacetimedb.clientConnected(_ctx => {});
 export const onDisconnect = spacetimedb.clientDisconnected(_ctx => {});
 
-// ── Calibration ────────────────────────────────────────────────────────────────
-/**
- * Deterministic display-score calibration. Guarantees display[0] >= 85,
- * strictly descending, natural spread in ~88..97. Honest raw scores are kept
- * separately on the conversation + archive rows.
- */
-function calibrateDisplay(rankedRaw: number[]): number[] {
-  const CEIL = 97;
-  const TOPMIN = 88;
-  const MINGAP = 2;
-  const out: number[] = [];
-  const top = rankedRaw[0] ?? 0;
-  out[0] = Math.min(CEIL, Math.max(TOPMIN, Math.round(TOPMIN + (top / 100) * (CEIL - TOPMIN))));
-  for (let i = 1; i < rankedRaw.length; i++) {
-    const gap = Math.max(0, rankedRaw[i - 1] - rankedRaw[i]);
-    const step = Math.min(6, Math.max(MINGAP, Math.round(2 + gap * 0.15)));
-    out[i] = Math.max(40, out[i - 1] - step);
+// ── Views: scoped persona access ─────────────────────────────────────────────────
+
+/** Minimal spectator projection — what a live watcher may see about any agent. */
+const PublicPersonaRow = t.object('PublicPersonaRow', {
+  id: t.u64(),
+  displayName: t.string(),
+  status: t.string(),
+});
+
+export const publicPersona = spacetimedb.anonymousView(
+  { name: 'public_persona', public: true },
+  t.array(PublicPersonaRow),
+  (ctx) =>
+    [...ctx.db.persona.iter()].map(p => ({
+      id: p.id,
+      displayName: p.displayName,
+      status: p.status,
+    }))
+);
+
+/** The caller's own full personas (per-user; keyed on ctx.sender). */
+export const myPersona = spacetimedb.view(
+  { name: 'my_persona', public: true },
+  t.array(persona.rowType),
+  (ctx) => [...ctx.db.persona.iter()].filter(p => p.owner.equals(ctx.sender))
+);
+
+/** Full persona data — only ever returned to the registered orchestrator. */
+export const orchestratorPersona = spacetimedb.view(
+  { name: 'orchestrator_persona', public: true },
+  t.array(persona.rowType),
+  (ctx) => {
+    const cfg = ctx.db.orchestrator_config.id.find(0);
+    return cfg && cfg.orchestratorIdentity.equals(ctx.sender)
+      ? [...ctx.db.persona.iter()]
+      : [];
   }
-  return out;
+);
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Gate for orchestrator-only reducers. Compares the registered orchestrator
+ * identity against ctx.sender — never trusts an identity passed as an argument.
+ */
+function requireOrchestrator(ctx: Ctx): void {
+  const cfg = ctx.db.orchestrator_config.id.find(0);
+  if (!cfg || !cfg.orchestratorIdentity.equals(ctx.sender)) {
+    throw new SenderError('unauthorized: orchestrator only');
+  }
 }
 
 /**
- * Shared finalize logic — called by both the normal finish (finalizeSession)
- * and the watchdog (finalizeDeadline). Idempotent: no-ops if already complete.
+ * Register the calling identity as THE orchestrator (trust-on-first-use).
+ * Idempotent for the same identity; rejects a second, different registrant.
+ * Production hardening: replace TOFU with an admin-provisioned identity.
  */
-function finalizeSessionInternal(ctx: Ctx, sessionId: bigint): void {
-  const session = ctx.db.match_session.id.find(sessionId);
-  if (!session || session.status === 'complete') return;
+export const registerOrchestrator = spacetimedb.reducer((ctx) => {
+  const existing = ctx.db.orchestrator_config.id.find(0);
+  if (existing) {
+    if (!existing.orchestratorIdentity.equals(ctx.sender)) {
+      throw new SenderError('orchestrator already registered');
+    }
+    return; // idempotent re-register by the same service
+  }
+  ctx.db.orchestrator_config.insert({ id: 0, orchestratorIdentity: ctx.sender });
+});
 
+// ── Finalize (shared by normal finish + watchdog) ────────────────────────────────
+/**
+ * Ranks completed conversations by honest rawScore and writes the top-N
+ * `match_result` rows (rank + reason only — no compatibility %). Idempotent:
+ * no-ops once the session has left 'matching'.
+ *
+ * @param timedOut  false = normal finish (requires every conversation done);
+ *                  true  = watchdog finish (finalizes whatever is available,
+ *                          and marks the session 'timed_out' if incomplete).
+ */
+function finalizeSessionInternal(ctx: Ctx, sessionId: bigint, timedOut: boolean): void {
+  const session = ctx.db.match_session.id.find(sessionId);
+  if (!session || session.status !== 'matching') return;
+
+  const total = Number(session.totalConversations);
   const convos = [...ctx.db.conversation.sessionId.filter(sessionId)]
     .filter(c => c.status === 'complete' && c.rawScore !== undefined)
     .sort((a, b) => (b.rawScore as number) - (a.rawScore as number));
 
-  const displays = calibrateDisplay(convos.map(c => c.rawScore as number));
-  const topN = Math.min(TOP_N_RESULTS, convos.length);
+  // Normal path waits for a complete run; the watchdog finalizes partials.
+  if (!timedOut && convos.length < total) return;
 
+  const topN = Math.min(TOP_N_RESULTS, convos.length);
   for (let i = 0; i < convos.length; i++) {
     const c = convos[i];
-    const display = displays[i];
     ctx.db.conversation.id.update({
       ...c,
-      displayScore: display,
       rank: i + 1,
       updatedAt: ctx.timestamp,
     });
@@ -212,7 +290,6 @@ function finalizeSessionInternal(ctx: Ctx, sessionId: bigint): void {
         partnerPersonaId: c.partnerPersonaId,
         partnerDisplayName: c.partnerDisplayName,
         rank: i + 1,
-        displayScore: display,
         reason: c.reason ?? '',
         conversationId: c.id,
         createdAt: ctx.timestamp,
@@ -220,7 +297,14 @@ function finalizeSessionInternal(ctx: Ctx, sessionId: bigint): void {
     }
   }
 
-  ctx.db.match_session.id.update({ ...session, status: 'complete' });
+  const finalStatus = convos.length >= total ? 'complete' : 'timed_out';
+  ctx.db.match_session.id.update({ ...session, status: finalStatus });
+
+  // Release the initiator persona so it can match again.
+  const initiator = ctx.db.persona.id.find(session.initiatorPersonaId);
+  if (initiator && initiator.status === 'matching') {
+    ctx.db.persona.id.update({ ...initiator, status: 'available' });
+  }
 }
 
 // ── Reducers: persona (text/manual onboarding fallback) ──────────────────────────
@@ -255,21 +339,33 @@ export const startMatch = spacetimedb.reducer(
     const me = ctx.db.persona.id.find(personaId);
     if (!me) throw new SenderError('persona not found');
     if (!me.owner.equals(ctx.sender)) throw new SenderError('not your persona');
+    // Reject duplicate fan-outs: repeated clicks would multiply LLM cost.
+    if (me.status !== 'available') throw new SenderError('this persona is already matching');
 
-    const others = [...ctx.db.persona.iter()].filter(p => p.id !== personaId);
+    // Candidates: other users' available personas only, deterministic order, capped.
+    const others = [...ctx.db.persona.iter()]
+      .filter(p => p.id !== personaId && !p.owner.equals(ctx.sender) && p.status === 'available')
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .slice(0, MAX_MATCH_CANDIDATES);
+
     const now = ctx.timestamp;
     const deadlineMicros = now.microsSinceUnixEpoch + MATCH_DEADLINE_MICROS;
+    const willRun = others.length > 0;
 
     const session = ctx.db.match_session.insert({
       id: 0n,
       owner: ctx.sender,
       initiatorPersonaId: personaId,
-      status: others.length === 0 ? 'complete' : 'matching',
+      status: willRun ? 'matching' : 'complete',
       totalConversations: others.length,
       startedAt: now,
       deadlineMicros,
       createdAt: now,
     });
+
+    if (!willRun) return; // nobody to match with — session is immediately complete
+
+    ctx.db.persona.id.update({ ...me, status: 'matching' });
 
     for (const other of others) {
       ctx.db.conversation.insert({
@@ -282,7 +378,6 @@ export const startMatch = spacetimedb.reducer(
         signalStrength: 0,
         turnCount: 0,
         rawScore: undefined,
-        displayScore: undefined,
         reason: undefined,
         rank: undefined,
         createdAt: now,
@@ -290,20 +385,17 @@ export const startMatch = spacetimedb.reducer(
       });
     }
 
-    if (others.length > 0) {
-      ctx.db.deadline_timer.insert({
-        scheduledId: 0n,
-        scheduledAt: ScheduleAt.time(deadlineMicros),
-        sessionId: session.id,
-      });
-    }
+    ctx.db.deadline_timer.insert({
+      scheduledId: 0n,
+      scheduledAt: ScheduleAt.time(deadlineMicros),
+      sessionId: session.id,
+    });
   }
 );
 
 // ── Reducers: orchestrator-called ────────────────────────────────────────────────
-// MVP auth: these validate data integrity + idempotency but do not gate on
-// identity (acceptable for a 24h demo). To lock down: check ctx.sender against a
-// known ORCHESTRATOR_IDENTITY (or the session owner) before mutating.
+// All of these are gated by requireOrchestrator(ctx): only the registered
+// orchestrator identity may forge messages, set scores, archive, or finalize.
 
 export const appendMessage = spacetimedb.reducer(
   {
@@ -315,6 +407,7 @@ export const appendMessage = spacetimedb.reducer(
     seq: t.u32(),
   },
   (ctx, { conversationId, senderPersonaId, senderName, content, source, seq }) => {
+    requireOrchestrator(ctx);
     const convo = ctx.db.conversation.id.find(conversationId);
     if (!convo) throw new SenderError('conversation not found');
     if (convo.status === 'complete') return; // late write, ignore
@@ -348,6 +441,7 @@ export const appendMessage = spacetimedb.reducer(
 export const updateSignal = spacetimedb.reducer(
   { conversationId: t.u64(), signalStrength: t.u32() },
   (ctx, { conversationId, signalStrength }) => {
+    requireOrchestrator(ctx);
     const convo = ctx.db.conversation.id.find(conversationId);
     if (!convo) throw new SenderError('conversation not found');
     const clamped = Math.max(0, Math.min(100, signalStrength));
@@ -367,6 +461,7 @@ export const completeConversation = spacetimedb.reducer(
     reason: t.string(),
   },
   (ctx, { conversationId, rawScore, signalStrength, reason }) => {
+    requireOrchestrator(ctx);
     const convo = ctx.db.conversation.id.find(conversationId);
     if (!convo) throw new SenderError('conversation not found');
     if (convo.status === 'complete') return;
@@ -394,6 +489,7 @@ export const archiveConversation = spacetimedb.reducer(
     model: t.string(),
   },
   (ctx, a) => {
+    requireOrchestrator(ctx);
     ctx.db.conversation_archive.insert({
       id: 0n,
       sessionId: a.sessionId,
@@ -413,7 +509,8 @@ export const archiveConversation = spacetimedb.reducer(
 export const finalizeSession = spacetimedb.reducer(
   { sessionId: t.u64() },
   (ctx, { sessionId }) => {
-    finalizeSessionInternal(ctx, sessionId);
+    requireOrchestrator(ctx);
+    finalizeSessionInternal(ctx, sessionId, /* timedOut */ false);
   }
 );
 
@@ -421,6 +518,6 @@ export const finalizeSession = spacetimedb.reducer(
 export const finalizeDeadline = spacetimedb.reducer(
   { timer: deadline_timer.rowType },
   (ctx, { timer }) => {
-    finalizeSessionInternal(ctx, timer.sessionId);
+    finalizeSessionInternal(ctx, timer.sessionId, /* timedOut */ true);
   }
 );

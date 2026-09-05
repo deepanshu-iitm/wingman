@@ -115,6 +115,16 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   padding: 0.9rem 1.1rem;
 }
 .result .rank { font-size: 1.4rem; width: 2rem; text-align: center; }
-.result .score { font-size: 1.6rem; font-weight: 700; color: var(--good); margin-left: auto; }
+.result .badge {
+  margin-left: auto;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--good);
+  background: rgba(120, 220, 160, 0.14);
+  border: 1px solid rgba(120, 220, 160, 0.3);
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  white-space: nowrap;
+}
 .result .who { font-weight: 700; }
 .result .reason { color: var(--muted); font-size: 0.85rem; }

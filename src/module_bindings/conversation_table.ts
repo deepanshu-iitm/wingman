@@ -20,7 +20,6 @@ export default __t.row({
   signalStrength: __t.u32().name("signal_strength"),
   turnCount: __t.u32().name("turn_count"),
   rawScore: __t.option(__t.u32()).name("raw_score"),
-  displayScore: __t.option(__t.u32()).name("display_score"),
   reason: __t.option(__t.string()),
   rank: __t.option(__t.u32()),
   createdAt: __t.timestamp().name("created_at"),

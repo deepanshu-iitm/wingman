@@ -39,6 +39,7 @@ import ArchiveConversationReducer from "./archive_conversation_reducer";
 import CompleteConversationReducer from "./complete_conversation_reducer";
 import CreatePersonaReducer from "./create_persona_reducer";
 import FinalizeSessionReducer from "./finalize_session_reducer";
+import RegisterOrchestratorReducer from "./register_orchestrator_reducer";
 import StartMatchReducer from "./start_match_reducer";
 import UpdateSignalReducer from "./update_signal_reducer";
 
@@ -49,7 +50,9 @@ import ConversationRow from "./conversation_table";
 import MatchResultRow from "./match_result_table";
 import MatchSessionRow from "./match_session_table";
 import MessageRow from "./message_table";
-import PersonaRow from "./persona_table";
+import MyPersonaRow from "./my_persona_table";
+import OrchestratorPersonaRow from "./orchestrator_persona_table";
+import PublicPersonaRow from "./public_persona_table";
 
 /** Type-only namespace exports for generated type groups. */
 
@@ -111,20 +114,27 @@ const tablesSchema = __schema({
       { name: 'message_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, MessageRow),
-  persona: __table({
-    name: 'persona',
+  myPersona: __table({
+    name: 'my_persona',
     indexes: [
-      { accessor: 'id', name: 'persona_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'owner', name: 'persona_owner_idx_btree', algorithm: 'btree', columns: [
-        'owner',
-      ] },
     ],
     constraints: [
-      { name: 'persona_id_key', constraint: 'unique', columns: ['id'] },
     ],
-  }, PersonaRow),
+  }, MyPersonaRow),
+  orchestratorPersona: __table({
+    name: 'orchestrator_persona',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, OrchestratorPersonaRow),
+  publicPersona: __table({
+    name: 'public_persona',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, PublicPersonaRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
@@ -134,6 +144,7 @@ const reducersSchema = __reducers(
   __reducerSchema("complete_conversation", CompleteConversationReducer),
   __reducerSchema("create_persona", CreatePersonaReducer),
   __reducerSchema("finalize_session", FinalizeSessionReducer),
+  __reducerSchema("register_orchestrator", RegisterOrchestratorReducer),
   __reducerSchema("start_match", StartMatchReducer),
   __reducerSchema("update_signal", UpdateSignalReducer),
 );

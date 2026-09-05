@@ -12,11 +12,12 @@ import {
 
 export default __t.row({
   id: __t.u64().primaryKey(),
-  sessionId: __t.u64().name("session_id"),
-  partnerPersonaId: __t.u64().name("partner_persona_id"),
-  partnerDisplayName: __t.string().name("partner_display_name"),
-  rank: __t.u32(),
-  reason: __t.string(),
-  conversationId: __t.u64().name("conversation_id"),
+  owner: __t.identity(),
+  displayName: __t.string().name("display_name"),
+  summary: __t.string(),
+  interests: __t.array(__t.string()),
+  values: __t.array(__t.string()),
+  socialStyle: __t.string().name("social_style"),
+  status: __t.string(),
   createdAt: __t.timestamp().name("created_at"),
 });

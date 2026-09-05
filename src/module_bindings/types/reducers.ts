@@ -11,6 +11,7 @@ import ArchiveConversationReducer from "../archive_conversation_reducer";
 import CompleteConversationReducer from "../complete_conversation_reducer";
 import CreatePersonaReducer from "../create_persona_reducer";
 import FinalizeSessionReducer from "../finalize_session_reducer";
+import RegisterOrchestratorReducer from "../register_orchestrator_reducer";
 import StartMatchReducer from "../start_match_reducer";
 import UpdateSignalReducer from "../update_signal_reducer";
 
@@ -19,6 +20,7 @@ export type ArchiveConversationParams = __Infer<typeof ArchiveConversationReduce
 export type CompleteConversationParams = __Infer<typeof CompleteConversationReducer>;
 export type CreatePersonaParams = __Infer<typeof CreatePersonaReducer>;
 export type FinalizeSessionParams = __Infer<typeof FinalizeSessionReducer>;
+export type RegisterOrchestratorParams = __Infer<typeof RegisterOrchestratorReducer>;
 export type StartMatchParams = __Infer<typeof StartMatchReducer>;
 export type UpdateSignalParams = __Infer<typeof UpdateSignalReducer>;
 

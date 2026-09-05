@@ -11,12 +11,7 @@ import {
 } from "spacetimedb";
 
 export default __t.row({
-  id: __t.u64().primaryKey(),
-  sessionId: __t.u64().name("session_id"),
-  partnerPersonaId: __t.u64().name("partner_persona_id"),
-  partnerDisplayName: __t.string().name("partner_display_name"),
-  rank: __t.u32(),
-  reason: __t.string(),
-  conversationId: __t.u64().name("conversation_id"),
-  createdAt: __t.timestamp().name("created_at"),
+  id: __t.u64(),
+  displayName: __t.string().name("display_name"),
+  status: __t.string(),
 });

@@ -20,7 +20,6 @@ export const Conversation = __t.object("Conversation", {
   signalStrength: __t.u32(),
   turnCount: __t.u32(),
   rawScore: __t.option(__t.u32()),
-  displayScore: __t.option(__t.u32()),
   reason: __t.option(__t.string()),
   rank: __t.option(__t.u32()),
   createdAt: __t.timestamp(),
@@ -56,7 +55,6 @@ export const MatchResult = __t.object("MatchResult", {
   partnerPersonaId: __t.u64(),
   partnerDisplayName: __t.string(),
   rank: __t.u32(),
-  displayScore: __t.u32(),
   reason: __t.string(),
   conversationId: __t.u64(),
   createdAt: __t.timestamp(),
@@ -88,6 +86,18 @@ export const Message = __t.object("Message", {
 });
 export type Message = __Infer<typeof Message>;
 
+export const MyPersona = __t.object("MyPersona", {});
+export type MyPersona = __Infer<typeof MyPersona>;
+
+export const OrchestratorConfig = __t.object("OrchestratorConfig", {
+  id: __t.u8(),
+  orchestratorIdentity: __t.identity(),
+});
+export type OrchestratorConfig = __Infer<typeof OrchestratorConfig>;
+
+export const OrchestratorPersona = __t.object("OrchestratorPersona", {});
+export type OrchestratorPersona = __Infer<typeof OrchestratorPersona>;
+
 export const Persona = __t.object("Persona", {
   id: __t.u64(),
   owner: __t.identity(),
@@ -100,4 +110,14 @@ export const Persona = __t.object("Persona", {
   createdAt: __t.timestamp(),
 });
 export type Persona = __Infer<typeof Persona>;
+
+export const PublicPersona = __t.object("PublicPersona", {});
+export type PublicPersona = __Infer<typeof PublicPersona>;
+
+export const PublicPersonaRow = __t.object("PublicPersonaRow", {
+  id: __t.u64(),
+  displayName: __t.string(),
+  status: __t.string(),
+});
+export type PublicPersonaRow = __Infer<typeof PublicPersonaRow>;
 

@@ -1,15 +1,21 @@
 /**
  * The ONLY LLM-touching seam in the whole system.
  *
- * `generateConversation(A, B)` takes two personas and returns a full 1:1
- * conversation transcript plus scores. Today it runs in deterministic
- * **placeholder mode** (canned, persona-flavored dialogue + an overlap
- * heuristic) so the entire Match-Me flow works with no API key.
+ * Two exported functions form the seam:
+ *   • `generateAgentTurn(speaker, counterpart, history)` — produces the NEXT
+ *     single turn given the conversation so far. The orchestrator calls this one
+ *     turn at a time and appends the result to the DB between calls, so later
+ *     turns can react to what has actually been written (including a human
+ *     takeover). This is agents acting through shared state, not scripted
+ *     playback.
+ *   • `scoreConversation(a, b)` — a deterministic compatibility judgement used
+ *     for ranking + training. Kept internal; never shown as a "% match".
  *
- * To go live, swap `generatePlaceholder` for a single OpenAI call in
- * `generateConversation` — the return shape stays identical, so nothing else in
- * the orchestrator, module, or client changes. That LLM call is Deepanshu's
- * domain (see the team plan); keep it isolated here.
+ * Both ship in deterministic **placeholder mode** (canned, persona-flavored
+ * dialogue + an overlap heuristic) so the whole Match-Me flow works with no API
+ * key. To go live, swap the placeholder bodies for OpenAI calls — the return
+ * shapes stay identical, so nothing else in the orchestrator, module, or client
+ * changes. That LLM work is Deepanshu's domain (see the team plan).
  */
 
 import { CONFIG } from './config.js';
@@ -30,30 +36,83 @@ export interface Turn {
   content: string;
 }
 
-export interface GeneratedConversation {
-  transcript: Turn[];
-  /** Honest 0–100 compatibility signal (stored for training; calibrated later). */
+export interface ConversationScore {
+  /** Honest 0–100 compatibility signal (stored for training + ranking). */
   rawScore: number;
   /** Final 0–100 "signals" strength the UI ramps toward. */
   signalStrength: number;
-  /** Short human-readable reason for the score. */
+  /** Short human-readable reason for the ranking. */
   reason: string;
   /** Which generator produced this ('placeholder' | 'gpt-4o-mini' | …). */
   model: string;
 }
 
-// ── Public seam ─────────────────────────────────────────────────────────────
+// ── Public seam: one turn at a time ──────────────────────────────────────────
 
-export async function generateConversation(
-  a: PersonaLike,
-  b: PersonaLike,
-): Promise<GeneratedConversation> {
-  // LLM drop-in point. Example (Deepanshu):
-  //   if (process.env.OPENAI_API_KEY) return generateWithLLM(a, b);
-  return generatePlaceholder(a, b);
+/**
+ * Generate the next turn spoken by `speaker` (replying to `counterpart`), given
+ * the turns that already exist. The orchestrator appends each returned turn to
+ * the DB before requesting the next, so generation always sees current state.
+ *
+ * LLM drop-in (Deepanshu): call the model here with `history` as context and
+ * return `{ senderPersonaId: speaker.id, senderName: speaker.displayName,
+ * content }`. Keep it bounded to a single turn.
+ */
+export async function generateAgentTurn(
+  speaker: PersonaLike,
+  counterpart: PersonaLike,
+  history: Turn[],
+): Promise<Turn> {
+  const content = placeholderTurn(speaker, counterpart, history.length);
+  return {
+    senderPersonaId: speaker.id,
+    senderName: speaker.displayName,
+    content,
+  };
 }
 
-// ── Placeholder implementation ────────────────────────────────────────────────
+/** How many agent turns a placeholder conversation should run to. */
+export function plannedTurnCount(): number {
+  return Math.max(2, CONFIG.TURNS_PER_CONVO);
+}
+
+// ── Public seam: score / rank ────────────────────────────────────────────────
+
+/**
+ * Deterministic compatibility judgement for ranking + training. LLM drop-in:
+ * replace with a single "judge" call over the finished transcript.
+ */
+export function scoreConversation(a: PersonaLike, b: PersonaLike): ConversationScore {
+  const sharedInterests = overlap(a.interests, b.interests);
+  const sharedValues = overlap(a.values, b.values);
+  const styleMatch = norm(a.socialStyle) === norm(b.socialStyle) && a.socialStyle.length > 0;
+
+  const rawScore = clamp(
+    Math.round(
+      34 +
+        sharedInterests.length * 13 +
+        sharedValues.length * 11 +
+        (styleMatch ? 8 : 0) +
+        jitter(a.id, b.id),
+    ),
+    0,
+    100,
+  );
+  const signalStrength = clamp(rawScore + 3, 0, 100);
+
+  const reasonParts: string[] = [];
+  if (sharedInterests.length > 0) reasonParts.push(`shared interest in ${sharedInterests.slice(0, 2).join(' & ')}`);
+  if (sharedValues.length > 0) reasonParts.push(`aligned values (${sharedValues.slice(0, 2).join(', ')})`);
+  if (styleMatch) reasonParts.push('similar social energy');
+  const reason =
+    reasonParts.length > 0
+      ? `Strong fit — ${reasonParts.join('; ')}.`
+      : `Friendly, easy rapport with room to grow.`;
+
+  return { rawScore, signalStrength, reason, model: 'placeholder' };
+}
+
+// ── Placeholder helpers ──────────────────────────────────────────────────────
 
 function norm(s: string): string {
   return s.trim().toLowerCase();
@@ -87,67 +146,45 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
-function generatePlaceholder(a: PersonaLike, b: PersonaLike): GeneratedConversation {
-  const sharedInterests = overlap(a.interests, b.interests);
-  const sharedValues = overlap(a.values, b.values);
-  const styleMatch = norm(a.socialStyle) === norm(b.socialStyle) && a.socialStyle.length > 0;
+/**
+ * A warm, human, jargon-free line for the given turn index, spoken by `speaker`
+ * to `counterpart`. Even indices open/probe, odd indices reply. Beyond the
+ * scripted arc it falls back to a friendly filler so longer runs still read ok.
+ */
+function placeholderTurn(speaker: PersonaLike, counterpart: PersonaLike, turnIndex: number): string {
+  const commonInterest = pick(overlap(speaker.interests, counterpart.interests), '');
+  const commonValue = pick(overlap(speaker.values, counterpart.values), '');
+  const myInterest = pick(speaker.interests, turnIndex === 0 ? 'trying new things' : 'meeting new people');
+  const myValue = pick(speaker.values, turnIndex % 2 === 0 ? 'kindness' : 'honesty');
 
-  // Honest overlap heuristic → 0..100.
-  const rawScore = clamp(
-    Math.round(
-      34 +
-        sharedInterests.length * 13 +
-        sharedValues.length * 11 +
-        (styleMatch ? 8 : 0) +
-        jitter(a.id, b.id),
-    ),
-    0,
-    100,
-  );
-  const signalStrength = clamp(rawScore + 3, 0, 100);
-
-  const aInterest = pick(a.interests, 'trying new things');
-  const bInterest = pick(b.interests, 'meeting new people');
-  const commonInterest = pick(sharedInterests, '');
-  const commonValue = pick(sharedValues, '');
-
-  // A warm, human, jargon-free 1:1 opener → reply → probe → wrap.
-  // Alternates A, B, A, B… and is trimmed/padded to CONFIG.TURNS_PER_CONVO.
-  const script: Array<[PersonaLike, string]> = [
-    [a, `Hey ${b.displayName}! I'm ${a.displayName} — nice to meet you. What's been keeping you busy lately?`],
-    [b, `Hi ${a.displayName}! Good to meet you too. Honestly I've been really into ${bInterest} lately. How about you?`],
-    [a, commonInterest
-      ? `No way, I'm into ${commonInterest} too! What got you started with it?`
-      : `Oh nice. For me it's ${aInterest} — I could talk about it for hours.`],
-    [b, commonInterest
-      ? `Ha, love that we overlap there. I got into it a couple years back and it kind of stuck.`
-      : `That sounds fun! I've always wanted to try ${aInterest}. What do you love most about it?`],
-    [a, `What matters most to you when you're picking who to spend time with?`],
-    [b, commonValue
-      ? `Big one for me is ${commonValue} — I need people who genuinely care about that.`
-      : `I really value ${pick(b.values, 'honesty')}. People who are real with me. You?`],
-    [a, commonValue
-      ? `Same here, ${commonValue} is huge for me. Feels like we'd actually get each other.`
-      : `Makes sense. I lean toward ${pick(a.values, 'kindness')} myself, so we'd balance each other out.`],
-    [b, `This was such an easy chat, ${a.displayName}. I'd genuinely love to hang out sometime.`],
-  ];
-
-  const transcript: Turn[] = script
-    .slice(0, Math.max(2, CONFIG.TURNS_PER_CONVO))
-    .map(([speaker, content]) => ({
-      senderPersonaId: speaker.id,
-      senderName: speaker.displayName,
-      content,
-    }));
-
-  const reasonParts: string[] = [];
-  if (sharedInterests.length > 0) reasonParts.push(`shared interest in ${sharedInterests.slice(0, 2).join(' & ')}`);
-  if (sharedValues.length > 0) reasonParts.push(`aligned values (${sharedValues.slice(0, 2).join(', ')})`);
-  if (styleMatch) reasonParts.push('similar social energy');
-  const reason =
-    reasonParts.length > 0
-      ? `Strong fit — ${reasonParts.join('; ')}.`
-      : `Friendly, easy rapport with room to grow.`;
-
-  return { transcript, rawScore, signalStrength, reason, model: 'placeholder' };
+  switch (turnIndex) {
+    case 0:
+      return `Hey ${counterpart.displayName}! I'm ${speaker.displayName} — nice to meet you. What's been keeping you busy lately?`;
+    case 1:
+      return `Hi ${counterpart.displayName}! Good to meet you too. Honestly I've been really into ${myInterest} lately. How about you?`;
+    case 2:
+      return commonInterest
+        ? `No way, I'm into ${commonInterest} too! What got you started with it?`
+        : `Oh nice. For me it's ${myInterest} — I could talk about it for hours.`;
+    case 3:
+      return commonInterest
+        ? `Ha, love that we overlap there. I got into it a couple years back and it kind of stuck.`
+        : `That sounds fun! I've always wanted to try ${myInterest}. What do you love most about it?`;
+    case 4:
+      return `What matters most to you when you're picking who to spend time with?`;
+    case 5:
+      return commonValue
+        ? `Big one for me is ${commonValue} — I need people who genuinely care about that.`
+        : `I really value ${myValue}. People who are real with me. You?`;
+    case 6:
+      return commonValue
+        ? `Same here, ${commonValue} is huge for me. Feels like we'd actually get each other.`
+        : `Makes sense. I lean toward ${myValue} myself, so we'd balance each other out.`;
+    case 7:
+      return `This was such an easy chat, ${counterpart.displayName}. I'd genuinely love to hang out sometime.`;
+    default:
+      return commonInterest
+        ? `Honestly ${counterpart.displayName}, the more we talk about ${commonInterest} the more I think we'd get along.`
+        : `I'm really enjoying this, ${counterpart.displayName} — we should keep it going.`;
+  }
 }

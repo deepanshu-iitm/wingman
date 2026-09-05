@@ -61,10 +61,14 @@ const builder = DbConnection.builder()
     statusPill.classList.add("on");
 
     c.subscriptionBuilder()
-      .onApplied((_ctx: SubscriptionEventContext) => scheduleRender())
+      .onApplied((_ctx: SubscriptionEventContext) => {
+        // Restore the board/results from durable state after a page reload.
+        restoreActiveSession();
+        scheduleRender();
+      })
       .onError((ctx: ErrorContext) => console.error("Subscription error:", ctx.event))
       .subscribe([
-        "SELECT * FROM persona",
+        "SELECT * FROM my_persona",
         "SELECT * FROM match_session",
         "SELECT * FROM conversation",
         "SELECT * FROM message",
@@ -73,7 +77,7 @@ const builder = DbConnection.builder()
 
     // Re-render on any change to subscribed tables.
     const bump = () => scheduleRender();
-    c.db.persona.onInsert(bump);
+    c.db.myPersona.onInsert(bump);
     c.db.conversation.onInsert(bump);
     c.db.conversation.onUpdate(bump);
     c.db.message.onInsert(bump);
@@ -130,11 +134,32 @@ function scheduleRender() {
 }
 
 function myPersonas() {
+  if (!conn) return [];
+  // `my_persona` is an owner-scoped view — every row it returns is already mine.
+  return [...conn.db.myPersona.iter()].sort((a, b) =>
+    Number(a.createdAt.microsSinceUnixEpoch - b.createdAt.microsSinceUnixEpoch),
+  );
+}
+
+/** After a reload, re-adopt this user's newest session so the board reappears. */
+function restoreActiveSession() {
+  if (activeSessionId !== null || watchForNewSession) return;
   const me = myIdentity;
-  if (!conn || !me) return [];
-  return [...conn.db.persona.iter()]
-    .filter((p) => p.owner.equals(me))
-    .sort((a, b) => Number(a.createdAt.microsSinceUnixEpoch - b.createdAt.microsSinceUnixEpoch));
+  if (!conn || !me) return;
+  const mine = [...conn.db.matchSession.iter()]
+    .filter((s) => s.owner.equals(me))
+    .sort((a, b) => Number(b.createdAt.microsSinceUnixEpoch - a.createdAt.microsSinceUnixEpoch));
+  if (mine.length === 0) return;
+  // Prefer a live (matching) session; otherwise show the most recent finished one.
+  const live = mine.find((s) => s.status === "matching");
+  activeSessionId = (live ?? mine[0]).id;
+}
+
+/** Qualitative live signal — a direction indicator, not a compatibility %. */
+function signalLabel(s: number): string {
+  if (s >= 65) return "🔥 strong signal";
+  if (s >= 35) return "good signal";
+  return "warming up";
 }
 
 function render() {
@@ -188,7 +213,7 @@ function render() {
     card.innerHTML = `
       <div class="convo-head">
         <strong>${escapeHtml(convo.partnerDisplayName)}</strong>
-        <span class="signal ${hot}">${convo.signalStrength}% signal</span>
+        <span class="signal ${hot}">${signalLabel(convo.signalStrength)}</span>
       </div>
       <div class="bar"><span style="width:${convo.signalStrength}%"></span></div>
       <div class="msgs">
@@ -222,7 +247,7 @@ function render() {
             <div class="who">${escapeHtml(r.partnerDisplayName)}</div>
             <div class="reason">${escapeHtml(r.reason)}</div>
           </div>
-          <div class="score">${r.displayScore}%</div>
+          <div class="badge">${r.rank === 1 ? "Top match" : `#${r.rank}`}</div>
         </div>`,
       )
       .join("");
