@@ -25,7 +25,7 @@ test('generateInterviewStep asks a bounded adaptive follow-up', async () => {
       const request = JSON.parse(init?.body);
       const context = JSON.parse(request.messages[1].content);
       assert.equal(request.response_format.type, 'json_schema');
-      assert.equal(request.max_completion_tokens, 1_500);
+      assert.equal(request.max_completion_tokens, 4_000);
       assert.equal(context.answerCount, 1);
 
       return Response.json({
