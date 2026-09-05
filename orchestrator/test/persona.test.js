@@ -16,7 +16,7 @@ test('extractPersona returns a validated draft and preserves the supplied name',
     'test-key',
     async (_input, init) => {
       const request = JSON.parse(init?.body);
-      assert.equal(request.model, 'gpt-5-nano');
+      assert.equal(request.model, 'gpt-5.6-luna');
       assert.equal(request.response_format.type, 'json_schema');
       assert.equal(init?.headers.Authorization, 'Bearer test-key');
 
