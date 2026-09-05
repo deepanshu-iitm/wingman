@@ -19,6 +19,11 @@
  */
 
 import { CONFIG } from './config.js';
+import {
+  generateAgentTurn as generateOpenAIAgentTurn,
+  type ConversationMessage,
+} from '../../src/agent.js';
+import { generateVerdict } from '../../src/verdict.js';
 
 /** Minimal persona shape the generator needs (subset of the `persona` row). */
 export interface PersonaLike {
@@ -34,6 +39,7 @@ export interface Turn {
   senderPersonaId: bigint;
   senderName: string;
   content: string;
+  source: 'agent' | 'human';
 }
 
 export interface ConversationScore {
@@ -48,12 +54,6 @@ export interface ConversationScore {
 }
 
 type Fetch = typeof fetch;
-
-type ChatCompletionResponse = {
-  choices?: Array<{ message?: { content?: unknown } }>;
-};
-
-const SCORE_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
 
 // ── Public seam: one turn at a time ──────────────────────────────────────────
 
@@ -70,12 +70,35 @@ export async function generateAgentTurn(
   speaker: PersonaLike,
   counterpart: PersonaLike,
   history: Turn[],
+  fetchImpl: Fetch = fetch,
 ): Promise<Turn> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (apiKey) {
+    try {
+      const result = await generateOpenAIAgentTurn(
+        speaker,
+        counterpart.displayName,
+        history.map(toConversationMessage),
+        apiKey,
+        fetchImpl,
+      );
+      return {
+        senderPersonaId: speaker.id,
+        senderName: speaker.displayName,
+        content: result.message,
+        source: 'agent',
+      };
+    } catch (error) {
+      console.warn('Agent generation failed; using placeholder turn.', error);
+    }
+  }
+
   const content = placeholderTurn(speaker, counterpart, history.length);
   return {
     senderPersonaId: speaker.id,
     senderName: speaker.displayName,
     content,
+    source: 'agent',
   };
 }
 
@@ -98,82 +121,44 @@ export async function scoreConversation(
 ): Promise<ConversationScore> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (apiKey) {
-    const response = await fetchImpl(SCORE_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    try {
+      const verdict = await generateVerdict(
+        toPersonaDraft(a),
+        toPersonaDraft(b),
+        history.map(toConversationMessage),
+        apiKey,
+        fetchImpl,
+      );
+      return {
+        rawScore: verdict.score,
+        signalStrength: verdict.score,
+        reason: verdict.rationale,
         model: process.env.OPENAI_MODEL ?? 'gpt-5-nano',
-        messages: [
-          {
-            role: 'system',
-            content:
-              'Assess friendship compatibility using only the supplied personas and completed conversation. ' +
-              'Return a 0-100 integer score and a concise rationale under 300 characters. ' +
-              'Do not infer sensitive traits.',
-          },
-          {
-            role: 'user',
-            content: JSON.stringify({
-              firstPersona: a,
-              secondPersona: b,
-              conversation: history.slice(-16).map(turn => ({
-                senderName: turn.senderName,
-                content: turn.content.slice(0, 600),
-              })),
-            }, (_key, value) => typeof value === 'bigint' ? value.toString() : value),
-          },
-        ],
-        response_format: {
-          type: 'json_schema',
-          json_schema: {
-            name: 'compatibility_verdict',
-            strict: true,
-            schema: {
-              type: 'object',
-              properties: {
-                score: { type: 'integer', minimum: 0, maximum: 100 },
-                rationale: { type: 'string' },
-              },
-              required: ['score', 'rationale'],
-              additionalProperties: false,
-            },
-          },
-        },
-        max_completion_tokens: 2_000,
-      }),
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (!response.ok) {
-      throw new Error(`Verdict generation failed with status ${response.status}`);
+      };
+    } catch (error) {
+      console.warn('Verdict generation failed; using placeholder score.', error);
     }
-    const payload = (await response.json()) as ChatCompletionResponse;
-    const content = payload.choices?.[0]?.message?.content;
-    if (typeof content !== 'string' || content.length === 0) {
-      throw new Error('Model returned no verdict');
-    }
-    const verdict = JSON.parse(content) as { score?: unknown; rationale?: unknown };
-    if (
-      typeof verdict.score !== 'number' ||
-      !Number.isInteger(verdict.score) ||
-      verdict.score < 0 ||
-      verdict.score > 100 ||
-      typeof verdict.rationale !== 'string' ||
-      verdict.rationale.trim().length === 0
-    ) {
-      throw new Error('Model returned an invalid verdict');
-    }
-    return {
-      rawScore: verdict.score,
-      signalStrength: verdict.score,
-      reason: verdict.rationale.trim().slice(0, 300),
-      model: process.env.OPENAI_MODEL ?? 'gpt-5-nano',
-    };
   }
 
   return scorePlaceholder(a, b, history);
+}
+
+function toConversationMessage(turn: Turn): ConversationMessage {
+  return {
+    senderName: turn.senderName,
+    content: turn.content,
+    source: turn.source,
+  };
+}
+
+function toPersonaDraft(persona: PersonaLike) {
+  return {
+    displayName: persona.displayName,
+    summary: persona.summary,
+    interests: persona.interests,
+    values: persona.values,
+    socialStyle: persona.socialStyle,
+  };
 }
 
 function scorePlaceholder(
