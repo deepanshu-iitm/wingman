@@ -22,8 +22,12 @@ import { CONFIG } from './config.js';
 import {
   generateAgentTurn as generateOpenAIAgentTurn,
   type ConversationMessage,
+  type ConversationPhase,
+  type TurnIntent,
 } from '../../src/agent.js';
 import { generateVerdict } from '../../src/verdict.js';
+
+export type { ConversationPhase } from '../../src/agent.js';
 
 /** Minimal persona shape the generator needs (subset of the `persona` row). */
 export interface PersonaLike {
@@ -33,6 +37,8 @@ export interface PersonaLike {
   interests: string[];
   values: string[];
   socialStyle: string;
+  voiceStyle: string;
+  speechSample: string;
 }
 
 export interface Turn {
@@ -40,6 +46,8 @@ export interface Turn {
   senderName: string;
   content: string;
   source: 'agent' | 'human';
+  /** The speaker's read on whether to keep going (agent turns only). */
+  intent: TurnIntent;
 }
 
 export interface ConversationScore {
@@ -70,6 +78,7 @@ export async function generateAgentTurn(
   speaker: PersonaLike,
   counterpart: PersonaLike,
   history: Turn[],
+  phase: ConversationPhase = 'flowing',
   fetchImpl: Fetch = fetch,
 ): Promise<Turn> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -81,30 +90,40 @@ export async function generateAgentTurn(
         history.map(toConversationMessage),
         apiKey,
         fetchImpl,
+        phase,
       );
       return {
         senderPersonaId: speaker.id,
         senderName: speaker.displayName,
         content: result.message,
         source: 'agent',
+        intent: result.intent,
       };
     } catch (error) {
       console.warn('Agent generation failed; using placeholder turn.', error);
     }
   }
 
-  const content = placeholderTurn(speaker, counterpart, history.length);
+  const content = placeholderTurn(speaker, counterpart, history.length, phase);
   return {
     senderPersonaId: speaker.id,
     senderName: speaker.displayName,
     content,
     source: 'agent',
+    // The placeholder can't judge the vibe, so it closes only when the loop has
+    // explicitly moved it into the closing phase.
+    intent: phase === 'closing' ? 'closing' : phase === 'wrapping' ? 'wrapping_up' : 'continue',
   };
 }
 
-/** How many agent turns a placeholder conversation should run to. */
-export function plannedTurnCount(): number {
-  return Math.max(2, CONFIG.TURNS_PER_CONVO);
+/** Fewest agent turns before a conversation may close naturally. */
+export function minTurns(): number {
+  return Math.max(2, CONFIG.MIN_TURNS_PER_CONVO);
+}
+
+/** Hard ceiling on agent turns regardless of how the chat is flowing. */
+export function maxTurns(): number {
+  return Math.max(minTurns(), CONFIG.MAX_TURNS_PER_CONVO);
 }
 
 // ── Public seam: score / rank ────────────────────────────────────────────────
@@ -158,6 +177,8 @@ function toPersonaDraft(persona: PersonaLike) {
     interests: persona.interests,
     values: persona.values,
     socialStyle: persona.socialStyle,
+    voiceStyle: persona.voiceStyle,
+    speechSample: persona.speechSample,
   };
 }
 
@@ -238,11 +259,23 @@ function clamp(n: number, lo: number, hi: number): number {
  * to `counterpart`. Even indices open/probe, odd indices reply. Beyond the
  * scripted arc it falls back to a friendly filler so longer runs still read ok.
  */
-function placeholderTurn(speaker: PersonaLike, counterpart: PersonaLike, turnIndex: number): string {
+function placeholderTurn(
+  speaker: PersonaLike,
+  counterpart: PersonaLike,
+  turnIndex: number,
+  phase: ConversationPhase = 'flowing',
+): string {
   const commonInterest = pick(overlap(speaker.interests, counterpart.interests), '');
   const commonValue = pick(overlap(speaker.values, counterpart.values), '');
   const myInterest = pick(speaker.interests, turnIndex === 0 ? 'trying new things' : 'meeting new people');
   const myValue = pick(speaker.values, turnIndex % 2 === 0 ? 'kindness' : 'honesty');
+
+  // In the wrapping phase, always land on a warm goodbye instead of the arc line.
+  if (phase === 'wrapping' || phase === 'closing') {
+    return commonInterest
+      ? `This was such an easy chat, ${counterpart.displayName} — we clearly both love ${commonInterest}. I'd genuinely love to hang out sometime. Let's do it soon!`
+      : `Honestly ${counterpart.displayName}, this was really fun. I've got to run, but let's pick it back up soon — take care!`;
+  }
 
   switch (turnIndex) {
     case 0:

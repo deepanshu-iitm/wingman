@@ -11,11 +11,7 @@ import {
 } from "spacetimedb";
 
 export default {
-  displayName: __t.string(),
-  summary: __t.string(),
-  interests: __t.array(__t.string()),
-  values: __t.array(__t.string()),
-  socialStyle: __t.string(),
-  voiceStyle: __t.string(),
-  speechSample: __t.string(),
+  conversationId: __t.u64(),
+  personaId: __t.u64(),
+  content: __t.string(),
 };

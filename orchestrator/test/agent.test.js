@@ -12,6 +12,8 @@ const persona = {
   interests: ['software', 'music'],
   values: ['curiosity', 'kindness'],
   socialStyle: 'Prefers small groups.',
+  voiceStyle: 'Warm and curious.',
+  speechSample: 'I really enjoy building useful things.',
 };
 
 test('generateAgentTurn returns a bounded validated message', async () => {
@@ -40,6 +42,7 @@ test('generateAgentTurn returns a bounded validated message', async () => {
               content: JSON.stringify({
                 message:
                   'Deepanshu loves building tools that bring people together. What kind of problems keep you curious?',
+                intent: 'continue',
               }),
             },
           },
@@ -52,6 +55,7 @@ test('generateAgentTurn returns a bounded validated message', async () => {
     result.message,
     'Deepanshu loves building tools that bring people together. What kind of problems keep you curious?'
   );
+  assert.equal(result.intent, 'continue');
 });
 
 test('generateAgentTurn limits history sent to the model', async () => {
@@ -73,7 +77,7 @@ test('generateAgentTurn limits history sent to the model', async () => {
       assert.equal(sentHistory[0].content, 'Message 8');
 
       return Response.json({
-        choices: [{ message: { content: '{"message":"Hello!"}' } }],
+        choices: [{ message: { content: '{"message":"Hello!","intent":"continue"}' } }],
       });
     }
   );
