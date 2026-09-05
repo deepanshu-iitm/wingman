@@ -17,8 +17,6 @@ spacetime.local.json
 **/.orchestrator-token
 
 # Environment files and logs
-.env
-.env.*
 !.env.example
 *.log
 npm-debug.log*
@@ -27,8 +25,8 @@ yarn-debug.log*
 yarn-error.log*
 
 # Editor and operating-system files
-.vscode/
 .idea/
 .DS_Store
 Thumbs.db
 
+config.bat
