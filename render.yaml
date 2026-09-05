@@ -16,7 +16,9 @@ services:
       - key: NODE_VERSION
         value: "22"
       - key: OPENAI_MODEL
-        value: gpt-5-nano
+        value: gpt-5.6-luna
+      - key: OPENAI_INTERVIEW_MODEL
+        value: gpt-5.6-luna
       # Secrets — set these in the Render dashboard (sync: false keeps them
       # out of git). CLIENT_ORIGIN must match the deployed Vercel origin.
       - key: OPENAI_API_KEY
