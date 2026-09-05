@@ -117,8 +117,10 @@ export async function generateAgentTurn(
             `Sound like a real person mid-conversation:\n` +
             `- Match their voice below — cadence, humor, slang, and their natural filler words ` +
             `and disfluencies (um, like, haha, "I mean", trailing off). Don't over-polish.\n` +
-            `- Use contractions and casual, texting-length messages. Vary the length — sometimes ` +
-            `a quick quip, sometimes a couple of sentences. Keep it under ~400 characters.\n` +
+            `- Use contractions and casual, texting-length messages. Keep it short — under ~150 ` +
+            `characters per message, like a real WhatsApp chat. Occasionally use very natural ` +
+            `Indian conversational markers (like "na", "yaar", "accha") if they fit the persona's ` +
+            `voice — at most one per message, never forced.\n` +
             `- Be genuinely playful and warm: react to what they said, build on it, tease a little.\n` +
             `- Ask a real question only when you're actually curious, grounded in your own ` +
             `interests/values or in what they just shared. Don't interrogate.\n\n` +
@@ -160,5 +162,5 @@ export async function generateAgentTurn(
       ? parsed.intent
       : 'continue';
 
-  return { message: parsed.message.trim().slice(0, 400), intent };
+  return { message: parsed.message.trim().slice(0, 150), intent };
 }
