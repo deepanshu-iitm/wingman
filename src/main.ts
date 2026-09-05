@@ -114,6 +114,8 @@ let transcriptTurns: { who: "wingman" | "me"; text: string }[] = [
   },
 ];
 let draft: PersonaDraft | null = null;
+let onboardingSubmitted = false;
+let thankYouVisible = false;
 
 // per-conversation message drafts (takeover + post-match chat)
 const inputDrafts: Record<string, string> = {};
@@ -401,7 +403,6 @@ function renderSignup(): string {
 
 // ── 02 · Interview ───────────────────────────────────────────────────────────
 function renderInterview(): string {
-  const canCreate = draft !== null;
   const log = transcriptTurns
     .map(
       (t) => `
@@ -481,13 +482,34 @@ function renderInterview(): string {
         <div class="wg-eyebrow">The interview</div>
         <div class="wg-transcript-log">${log}${partialTurn}${draftBlock}</div>
         ${
-          canCreate
-            ? `<button class="wg-btn" data-action="create-persona">Looks right — build my agent →</button>`
+          onboardingSubmitted
+            ? `<div class="wg-banner">Your Wingman profile is ready. We’ll be in touch soon.</div>`
+            : draft
+              ? `<p class="wg-lead">Finishing your Wingman profile…</p>`
             : `<p class="wg-lead">Wingman turns this into an agent that goes and meets people for you.</p>`
         }
       </div>
     </div>
+    ${thankYouVisible ? renderThankYou() : ""}
   </div>`;
+}
+
+function renderThankYou(): string {
+  return `
+    <div class="wg-overlay">
+      <section class="wg-thankyou" role="dialog" aria-modal="true" aria-labelledby="thankyou-title">
+        <div class="wg-thankyou-mark">W</div>
+        <div class="wg-eyebrow">You’re all set</div>
+        <h2 class="wg-hero" id="thankyou-title">Thank you, ${escapeHtml(signup.name)}.</h2>
+        <p class="wg-lead">
+          Your Wingman is ready and learning what makes a connection feel right for you.
+          We’re thoughtfully preparing the next step and will get back to you soon when
+          there’s someone worth meeting.
+        </p>
+        <p class="wg-thankyou-note">Until then, your Wingman has it from here.</p>
+        <button class="wg-btn" data-action="dismiss-thankyou">Got it</button>
+      </section>
+    </div>`;
 }
 
 // ── 03 · What it heard ───────────────────────────────────────────────────────
@@ -944,6 +966,9 @@ async function handleAction(action: string, el: HTMLElement) {
     case "create-persona":
       await createPersonaFromDraft();
       break;
+    case "dismiss-thankyou":
+      thankYouVisible = false;
+      break;
     case "start-match":
       startMatch();
       break;
@@ -990,22 +1015,36 @@ async function handleAction(action: string, el: HTMLElement) {
 }
 
 async function createPersonaFromDraft() {
-  if (!conn || !draft) return;
+  if (!conn || !draft || onboardingSubmitted) return;
   const summary = signup.age || signup.gender
     ? `${draft.summary} (${[signup.age && `${signup.age}`, signup.gender]
         .filter(Boolean)
         .join(", ")}.)`
     : draft.summary;
+  onboardingSubmitted = true;
+  thankYouVisible = true;
   watchForNewPersona = true;
-  await conn.reducers.createPersona({
-    displayName: draft.displayName || signup.name.trim(),
-    summary,
-    interests: draft.interests,
-    values: draft.values,
-    socialStyle: draft.socialStyle,
-    voiceStyle: draft.voiceStyle,
-    speechSample: draft.speechSample,
-  });
+  scheduleRender();
+
+  try {
+    await conn.reducers.createPersona({
+      displayName: draft.displayName || signup.name.trim(),
+      summary,
+      interests: draft.interests,
+      values: draft.values,
+      socialStyle: draft.socialStyle,
+      voiceStyle: draft.voiceStyle,
+      speechSample: draft.speechSample,
+    });
+  } catch (error) {
+    onboardingSubmitted = false;
+    thankYouVisible = false;
+    watchForNewPersona = false;
+    interviewError =
+      error instanceof Error ? error.message : "Couldn’t save your Wingman profile.";
+    scheduleRender();
+    return;
+  }
 
   if (!welcomeEmailRequested) {
     welcomeEmailRequested = true;
@@ -1319,7 +1358,7 @@ function handleInterviewMessage(message: InterviewMessage) {
       await releaseMicrophone();
       interviewSocket?.close();
       interviewSocket = null;
-      scheduleRender();
+      await createPersonaFromDraft();
     })();
   } else if (message.type === "error") {
     interviewBusy = false;
@@ -1496,6 +1535,7 @@ async function extractPersona(transcript: string) {
     voiceStyle: persona.voiceStyle ?? "",
     speechSample: persona.speechSample ?? "",
   };
+  await createPersonaFromDraft();
 }
 
 // ── Connect ──────────────────────────────────────────────────────────────────
@@ -1553,7 +1593,6 @@ const builder = DbConnection.builder()
       if (watchForNewPersona && myIdentity && row.owner.equals(myIdentity)) {
         activePersonaId = row.id;
         watchForNewPersona = false;
-        view = "read";
       }
       scheduleRender();
     });
