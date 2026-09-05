@@ -6,8 +6,9 @@ import {
   extractPersona,
 } from '../dist/persona.js';
 
-const transcript =
+const userAnswer =
   'I enjoy building software, meeting curious people, and working in small groups.';
+const transcript = `Wingman: What do you enjoy doing?\nUser: ${userAnswer}`;
 
 test('extractPersona returns a validated draft and preserves the supplied name', async () => {
   const draft = await extractPersona(
@@ -29,6 +30,7 @@ test('extractPersona returns a validated draft and preserves the supplied name',
                 interests: [' software ', 'hackathons', 'software'],
                 values: ['curiosity'],
                 socialStyle: 'Prefers small groups.',
+                voiceStyle: 'Thoughtful, concise, and curious.',
               }),
             },
           },
@@ -43,6 +45,8 @@ test('extractPersona returns a validated draft and preserves the supplied name',
     interests: ['software', 'hackathons'],
     values: ['curiosity'],
     socialStyle: 'Prefers small groups.',
+    voiceStyle: 'Thoughtful, concise, and curious.',
+    speechSample: userAnswer,
   });
 });
 

@@ -88,9 +88,9 @@ export async function generateAgentTurn(
         speaker,
         counterpart.displayName,
         history.map(toConversationMessage),
-        phase,
         apiKey,
         fetchImpl,
+        phase,
       );
       return {
         senderPersonaId: speaker.id,
@@ -111,8 +111,8 @@ export async function generateAgentTurn(
     content,
     source: 'agent',
     // The placeholder can't judge the vibe, so it closes only when the loop has
-    // moved it into the wrapping phase.
-    intent: phase === 'wrapping' ? 'closing' : 'continue',
+    // explicitly moved it into the closing phase.
+    intent: phase === 'closing' ? 'closing' : phase === 'wrapping' ? 'wrapping_up' : 'continue',
   };
 }
 
@@ -271,7 +271,7 @@ function placeholderTurn(
   const myValue = pick(speaker.values, turnIndex % 2 === 0 ? 'kindness' : 'honesty');
 
   // In the wrapping phase, always land on a warm goodbye instead of the arc line.
-  if (phase === 'wrapping') {
+  if (phase === 'wrapping' || phase === 'closing') {
     return commonInterest
       ? `This was such an easy chat, ${counterpart.displayName} — we clearly both love ${commonInterest}. I'd genuinely love to hang out sometime. Let's do it soon!`
       : `Honestly ${counterpart.displayName}, this was really fun. I've got to run, but let's pick it back up soon — take care!`;

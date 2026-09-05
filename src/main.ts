@@ -444,7 +444,8 @@ function renderInterview(): string {
         </div>
         <label class="wg-consent">
           <input type="checkbox" data-field="voice-consent" ${voiceConsent ? "checked" : ""} />
-          I consent to live transcription. Raw audio is not stored.
+          I consent to live transcription and storing a short speech excerpt to shape my agent's
+          writing style. Raw audio is not stored.
         </label>
         <button class="wg-btn-ghost wg-btn wg-btn-sm" style="color:var(--cream);border-color:var(--cream)"
           data-action="switch-type" ${recording ? "disabled" : ""}>Rather type it</button>
@@ -1316,7 +1317,7 @@ async function startVoiceInterview() {
   liveTranscript = "";
   personaPending = false;
   if (!voiceConsent) {
-    interviewError = "Confirm voice transcription consent before starting.";
+    interviewError = "Confirm voice processing consent before starting.";
     scheduleRender();
     return;
   }

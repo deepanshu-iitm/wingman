@@ -14,7 +14,7 @@ export type ConversationMessage = {
 };
 
 /** Where a conversation is in its arc, so the agent knows whether to wind down. */
-export type ConversationPhase = 'opening' | 'flowing' | 'wrapping';
+export type ConversationPhase = 'opening' | 'flowing' | 'wrapping' | 'closing';
 
 /** The speaker's read on whether the chat should keep going or close out. */
 export type TurnIntent = 'continue' | 'wrapping_up' | 'closing';
@@ -79,6 +79,8 @@ function phaseGuidance(phase: ConversationPhase, otherName: string): string {
       return `This is the very first message. Break the ice warmly and naturally, like texting someone new you're curious about. Set an easy, playful tone.`;
     case 'wrapping':
       return `The conversation is naturally winding down. Start bringing it to a warm, human close — react to something they said, and either float staying in touch or say a genuine goodbye. Do NOT stop mid-thought. If you've said your goodbye, set intent to "closing"; if you're easing toward it, set "wrapping_up".`;
+    case 'closing':
+      return `Close the conversation now with a warm, natural final message. If the other person said goodbye, acknowledge it before saying your own goodbye. Do not ask another question. Set intent to "closing".`;
     default:
       return `Keep it flowing. React to what they just said before adding your own thing. Tease, riff, get curious — this is two people vibing, not an interview.`;
   }
@@ -88,9 +90,9 @@ export async function generateAgentTurn(
   persona: PersonaDraft,
   otherDisplayName: string,
   history: ConversationMessage[],
-  phase: ConversationPhase,
   apiKey: string,
-  fetchImpl: FetchLike = fetch
+  fetchImpl: FetchLike = fetch,
+  phase: ConversationPhase = 'flowing'
 ): Promise<AgentTurn> {
   const otherName = otherDisplayName.trim().slice(0, 80);
   if (!otherName) {
@@ -152,7 +154,9 @@ export async function generateAgentTurn(
   }
 
   const intent: TurnIntent =
-    parsed.intent === 'closing' || parsed.intent === 'wrapping_up'
+    phase === 'closing'
+      ? 'closing'
+      : parsed.intent === 'closing' || parsed.intent === 'wrapping_up'
       ? parsed.intent
       : 'continue';
 

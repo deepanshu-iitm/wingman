@@ -151,8 +151,22 @@ export async function extractPersona(
     values: cleanList(extracted.values),
     socialStyle: cleanText(extracted.socialStyle, 'social style', 200),
     voiceStyle: cleanText(extracted.voiceStyle, 'voice style', 400),
-    speechSample: sampleSpeech(cleanTranscript),
+    speechSample: sampleSpeech(userSpeechOnly(cleanTranscript)),
   };
+}
+
+/**
+ * Adaptive interviews include both `Wingman:` and `User:` turns. Only retain
+ * the user's words for voice matching; plain one-shot transcripts are already
+ * user-only and pass through unchanged.
+ */
+function userSpeechOnly(transcript: string): string {
+  const userTurns = transcript
+    .split(/\r?\n/)
+    .map((line) => line.match(/^User:\s*(.+)$/i)?.[1]?.trim())
+    .filter((line): line is string => Boolean(line));
+
+  return userTurns.length > 0 ? userTurns.join(' ') : transcript;
 }
 
 /**

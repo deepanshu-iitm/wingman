@@ -28,11 +28,14 @@ import {
   minTurns,
   maxTurns,
   scoreConversation,
-  type ConversationPhase,
   type PersonaLike,
   type Turn,
 } from './generateConversation.js';
-import { shouldArchiveConversation } from './conversationLifecycle.js';
+import {
+  nextConversationPhase,
+  shouldArchiveConversation,
+  shouldEndAfterTurn,
+} from './conversationLifecycle.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -215,13 +218,14 @@ async function runConversation(conn: DbConnection, sessionId: bigint, conversati
       return;
     }
 
-    const softDeadlineHit = Date.now() - startedAt >= CONFIG.CONVO_SOFT_MS;
-    const nearMax = history.length >= max - 2;
-    const partnerWindingDown = history.at(-1)?.intent === 'wrapping_up';
-    const shouldWrap =
-      history.length >= min && (softDeadlineHit || nearMax || partnerWindingDown);
-    const phase: ConversationPhase =
-      history.length === 0 ? 'opening' : shouldWrap ? 'wrapping' : 'flowing';
+    const previousIntent = history.at(-1)?.intent;
+    const phase = nextConversationPhase(
+      history.length,
+      min,
+      max,
+      previousIntent,
+      Date.now() - startedAt >= CONFIG.CONVO_SOFT_MS,
+    );
 
     const lastSpeakerId = history.at(-1)?.senderPersonaId;
     const speaker = lastSpeakerId === a.id ? b : a;
@@ -243,8 +247,8 @@ async function runConversation(conn: DbConnection, sessionId: bigint, conversati
       await conn.reducers.updateSignal({ conversationId, signalStrength: ramped });
     }
 
-    // Natural mutual close: past the floor, a goodbye ends the conversation.
-    if (turn.intent === 'closing' && history.length >= min) break;
+    // A goodbye gets one final response from the other persona before ending.
+    if (shouldEndAfterTurn(previousIntent, history.length, min)) break;
 
     await sleep(CONFIG.PACING_MS);
   }
