@@ -58,6 +58,33 @@ test('generateAgentTurn returns a bounded validated message', async () => {
   assert.equal(result.intent, 'continue');
 });
 
+test('generateAgentTurn shortens long output at a sentence boundary', async () => {
+  const firstSentence =
+    'That sounds genuinely fun, and I can see why it has kept you interested for so long.';
+  const result = await generateAgentTurn(
+    persona,
+    'Ramesh',
+    [],
+    'test-key',
+    async () =>
+      Response.json({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                message: `${firstSentence} ${'Another thought '.repeat(10)}`,
+                intent: 'continue',
+              }),
+            },
+          },
+        ],
+      })
+  );
+
+  assert.equal(result.message, firstSentence);
+  assert.ok(result.message.length <= 150);
+});
+
 test('generateAgentTurn limits history sent to the model', async () => {
   const history = Array.from({ length: 20 }, (_, index) => ({
     senderName: 'Ramesh',

@@ -71,6 +71,7 @@ let watchForNewSession = false;
 let watchForNewPersona = false;
 let expandedId: bigint | null = null;
 let matchSeen = false; // user has moved past the celebration into chat
+let showAgentConvo = false; // expanded agent conversation in chat view
 
 // `matchSeen` must survive reloads, or onApplied re-shows the celebration on
 // top of the chat the user already moved on to. Persist it per session id.
@@ -553,15 +554,68 @@ function deriveNodes(p: Persona): { label: string; x: number; y: number }[] {
   }));
 }
 
+// Every anchor corresponds to information captured during onboarding. This
+// keeps the map descriptive instead of presenting hash-derived values as a
+// psychological assessment.
+const PROFILE_ANCHORS = [
+  { label: "Interests", cx: 50, cy: 10 },
+  { label: "Values", cx: 90, cy: 50 },
+  { label: "Social style", cx: 50, cy: 90 },
+  { label: "Voice", cx: 10, cy: 50 },
+];
+
+function renderNeuralGraph(p: Persona): string {
+  const entries = [
+    ...p.interests.slice(0, 2).map((label) => ({ label, anchorIndex: 0 })),
+    ...p.values.slice(0, 2).map((label) => ({ label, anchorIndex: 1 })),
+    ...(p.socialStyle ? [{ label: p.socialStyle, anchorIndex: 2 }] : []),
+    ...(p.voiceStyle ? [{ label: p.voiceStyle, anchorIndex: 3 }] : []),
+  ].slice(0, 6);
+  if (!entries.length) entries.push({ label: "Your profile", anchorIndex: 2 });
+  const W = 400, H = 400;
+  const sx = (pct: number) => Math.round((pct / 100) * W);
+  const sy = (pct: number) => Math.round((pct / 100) * H);
+
+  const usedSlots = [0, 0, 0, 0];
+  const nodes = entries.map(({ label, anchorIndex }) => {
+    const anchor = PROFILE_ANCHORS[anchorIndex];
+    const slot = usedSlots[anchorIndex]++;
+    const offset = (slot - 0.5) * 14;
+    const verticalAnchor = anchorIndex === 0 || anchorIndex === 2;
+    return {
+      label: label.length > 24 ? `${label.slice(0, 23)}…` : label,
+      anchorIndex,
+      cx: verticalAnchor ? 50 + offset : (anchor.cx + 50) / 2,
+      cy: verticalAnchor ? (anchor.cy + 50) / 2 : 50 + offset,
+    };
+  });
+
+  const youCx = Math.round(nodes.reduce((s, n) => s + n.cx, 0) / nodes.length);
+  const youCy = Math.round(nodes.reduce((s, n) => s + n.cy, 0) / nodes.length);
+
+  const profileEdges = nodes.map((node) => {
+    const anchor = PROFILE_ANCHORS[node.anchorIndex];
+    return `<line x1="${sx(node.cx)}" y1="${sy(node.cy)}" x2="${sx(anchor.cx)}" y2="${sy(anchor.cy)}" stroke="#16130e" stroke-width="1.2" stroke-opacity="0.35"/>`;
+  });
+
+  const anchorNodes = PROFILE_ANCHORS.map(
+    (t) =>
+      `<g><circle cx="${sx(t.cx)}" cy="${sy(t.cy)}" r="32" fill="#ffb020" stroke="#16130e" stroke-width="1.5"/><text x="${sx(t.cx)}" y="${sy(t.cy)}" dominant-baseline="middle" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="11" font-weight="700" fill="#16130e">${t.label}</text></g>`
+  ).join("");
+
+  const interestNodes = nodes.map((n) => {
+    const w = Math.max(62, n.label.length * 7 + 22);
+    return `<g><rect x="${sx(n.cx) - Math.round(w / 2)}" y="${sy(n.cy) - 14}" width="${w}" height="28" rx="14" fill="#ffffff" stroke="#16130e" stroke-width="1.5"/><text x="${sx(n.cx)}" y="${sy(n.cy)}" dominant-baseline="middle" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="12" font-weight="700" fill="#16130e">${escapeHtml(n.label)}</text></g>`;
+  }).join("");
+
+  return `<svg class="wg-neural" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${profileEdges.join("")}${anchorNodes}${interestNodes}<circle cx="${sx(youCx)}" cy="${sy(youCy)}" r="9" fill="#ff5c42" stroke="#16130e" stroke-width="2"/></svg>`;
+}
+
 function renderRead(): string {
   const p = activePersona();
   if (!p) return renderLoading("Shaping your agent…");
 
   const traits = deriveTraits(p);
-  const nodes = deriveNodes(p);
-  // "here" marker sits at the centroid of the plotted nodes.
-  const hereX = Math.round(nodes.reduce((s, n) => s + n.x, 0) / nodes.length);
-  const hereY = Math.round(nodes.reduce((s, n) => s + n.y, 0) / nodes.length);
 
   return `
   <div class="wg-screen">
@@ -604,21 +658,13 @@ function renderRead(): string {
           <p class="wg-lead">Style read: <strong>${escapeHtml(p.socialStyle)}</strong></p>
         </div>
         <div class="wg-read-card">
-          <div class="wg-eyebrow">Your mental model</div>
+          <div class="wg-eyebrow">Your profile map</div>
           <div class="wg-map">
-            <div class="wg-map-axis" style="left:12px;top:8px">Head</div>
-            <div class="wg-map-axis" style="right:12px;bottom:8px">Heart</div>
-            ${nodes
-              .map(
-                (n) =>
-                  `<div class="wg-map-node" style="left:${n.x}%;top:${n.y}%">${n.label}</div>`,
-              )
-              .join("")}
-            <div class="wg-map-here" style="left:${hereX}%;top:${hereY}%"></div>
+            ${renderNeuralGraph(p)}
           </div>
         </div>
         <button class="wg-btn wg-btn-green" data-action="start-match">
-          Send my agent in → <span class="sub">meet the room</span>
+          Find my most compatible match →
         </button>
       </div>
     </div>
@@ -785,6 +831,19 @@ function renderBubble(
     </div>`;
 }
 
+function renderChatBubble(
+  m: ReturnType<typeof messagesFor>[number],
+  c: Conversation,
+): string {
+  const mine = m.senderPersonaId === c.initiatorPersonaId;
+  const seed = mine ? c.initiatorPersonaId : c.partnerPersonaId;
+  return `
+    <div class="wg-bubble ${mine ? "mine" : "partner"}">
+      <div class="chip">${avatarSvg(characterFor(seed))}</div>
+      <div class="text">${escapeHtml(m.content)}</div>
+    </div>`;
+}
+
 // ── 06/07 · Expanded overlay + take the wheel ────────────────────────────────
 function renderOverlay(): string {
   if (!conn || expandedId === null) return "";
@@ -889,24 +948,50 @@ function renderChat(): string {
   const c = conn.db.conversation.id.find(top.conversationId);
   if (!c) return renderLoading("Opening the chat…");
 
-  const msgs = messagesFor(c.id);
+  const allMsgs = messagesFor(c.id);
+  const agentMsgs = allMsgs.filter((m) => m.source === "agent");
+  const humanMsgs = allMsgs.filter((m) => m.source === "human");
+  const partnerFirst = escapeHtml(firstName(c.partnerDisplayName));
+
+  const agentSection = showAgentConvo
+    ? `<div class="wg-agent-convo">
+        <div class="wg-agent-convo-head">
+          <span class="wg-eyebrow" style="margin:0">Agent conversation</span>
+          <button class="wg-agent-convo-close" data-action="toggle-agent-convo">Close ×</button>
+        </div>
+        <div class="wg-agent-msgs">
+          ${agentMsgs.map((m) => renderBubble(m, c)).join("")}
+        </div>
+      </div>`
+    : "";
+
+  const chatLog =
+    humanMsgs.length === 0
+      ? `<div class="wg-chat-empty">No messages yet — say hi to ${partnerFirst}!</div>`
+      : humanMsgs.map((m) => renderChatBubble(m, c)).join("");
+
   return `
   <div class="wg-screen">
     <div class="wg-chat">
       <div class="wg-chat-head">
         <button class="wg-close" data-action="back-to-match">←</button>
         <div class="wg-av av" style="width:44px;height:44px">${avatarSvg(characterFor(c.partnerPersonaId))}</div>
-        <div>
+        <div style="flex:1">
           <div style="font-size:19px;font-weight:800">${escapeHtml(c.partnerDisplayName)}</div>
-          <div class="wg-privacy">you matched · say the first thing</div>
+          <div class="wg-privacy">you matched</div>
         </div>
+        <div class="wg-live-pill"><span class="wg-dot"></span> live</div>
       </div>
       <div class="wg-summary">
         <div class="wg-eyebrow">Why your agents clicked</div>
         <div class="wg-summary-body">${escapeHtml(top.reason)}</div>
+        <button class="wg-see-convo-btn" data-action="toggle-agent-convo">
+          ${showAgentConvo ? "Hide conversation ×" : "See the full conversation →"}
+        </button>
       </div>
+      ${agentSection}
       <div class="wg-chat-log">
-        ${msgs.map((m) => renderBubble(m, c)).join("")}
+        ${chatLog}
       </div>
       <div class="wg-send-row">
         <input class="wg-input" data-focus="chat-${c.id}" data-input="${c.id}"
@@ -1006,10 +1091,15 @@ async function handleAction(action: string, el: HTMLElement) {
       break;
     case "to-chat":
       markMatchSeen();
+      showAgentConvo = false;
       view = "chat";
       break;
     case "back-to-match":
+      showAgentConvo = false;
       view = "match";
+      break;
+    case "toggle-agent-convo":
+      showAgentConvo = !showAgentConvo;
       break;
   }
   scheduleRender();

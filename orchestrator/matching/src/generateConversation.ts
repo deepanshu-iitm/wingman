@@ -270,41 +270,40 @@ function placeholderTurn(
   const myInterest = pick(speaker.interests, turnIndex === 0 ? 'trying new things' : 'meeting new people');
   const myValue = pick(speaker.values, turnIndex % 2 === 0 ? 'kindness' : 'honesty');
 
-  // In the wrapping phase, always land on a warm goodbye instead of the arc line.
   if (phase === 'wrapping' || phase === 'closing') {
     return commonInterest
-      ? `This was such an easy chat, ${counterpart.displayName} — we clearly both love ${commonInterest}. I'd genuinely love to hang out sometime. Let's do it soon!`
-      : `Honestly ${counterpart.displayName}, this was really fun. I've got to run, but let's pick it back up soon — take care!`;
+      ? `${counterpart.displayName} this was too easy — both love ${commonInterest}. Let's hang!`
+      : `${counterpart.displayName}, genuinely fun chatting. Let's pick this back up!`;
   }
 
   switch (turnIndex) {
     case 0:
-      return `Hey ${counterpart.displayName}! I'm ${speaker.displayName} — nice to meet you. What's been keeping you busy lately?`;
+      return `Hey ${counterpart.displayName}! I'm ${speaker.displayName} — what's keeping you busy?`;
     case 1:
-      return `Hi ${counterpart.displayName}! Good to meet you too. Honestly I've been really into ${myInterest} lately. How about you?`;
+      return `Nice! Been really into ${myInterest} lately. You?`;
     case 2:
       return commonInterest
-        ? `No way, I'm into ${commonInterest} too! What got you started with it?`
-        : `Oh nice. For me it's ${myInterest} — I could talk about it for hours.`;
+        ? `Wait, ${commonInterest} too? Same here! What got you into it?`
+        : `Nice — I love ${myInterest}. Could talk about it forever.`;
     case 3:
       return commonInterest
-        ? `Ha, love that we overlap there. I got into it a couple years back and it kind of stuck.`
-        : `That sounds fun! I've always wanted to try ${myInterest}. What do you love most about it?`;
+        ? `Ha, love that we overlap. Been at it a couple years now.`
+        : `Sounds fun! What's your favourite part about it?`;
     case 4:
-      return `What matters most to you when you're picking who to spend time with?`;
+      return `What do you look for in people you actually want to hang out with?`;
     case 5:
       return commonValue
-        ? `Big one for me is ${commonValue} — I need people who genuinely care about that.`
-        : `I really value ${myValue}. People who are real with me. You?`;
+        ? `For me it's ${commonValue} — non-negotiable honestly.`
+        : `I really value ${myValue}. People who are real. You?`;
     case 6:
       return commonValue
-        ? `Same here, ${commonValue} is huge for me. Feels like we'd actually get each other.`
-        : `Makes sense. I lean toward ${myValue} myself, so we'd balance each other out.`;
+        ? `Same, ${commonValue} is huge. Feel like we'd genuinely click.`
+        : `Makes sense. I lean into ${myValue} myself — we'd balance each other.`;
     case 7:
-      return `This was such an easy chat, ${counterpart.displayName}. I'd genuinely love to hang out sometime.`;
+      return `Such an easy chat, ${counterpart.displayName}. We should hang sometime!`;
     default:
       return commonInterest
-        ? `Honestly ${counterpart.displayName}, the more we talk about ${commonInterest} the more I think we'd get along.`
-        : `I'm really enjoying this, ${counterpart.displayName} — we should keep it going.`;
+        ? `The more we talk about ${commonInterest}, the more I think we'd vibe.`
+        : `Really enjoying this, ${counterpart.displayName} — let's keep it going.`;
   }
 }
