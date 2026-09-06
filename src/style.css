@@ -1398,24 +1398,48 @@ button {
     gap: 20px;
   }
 
+  .wg-signup-aside {
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr);
+    align-items: center;
+    text-align: left;
+  }
+
   .wg-signup-avatar {
-    width: min(170px, 55vw);
-    height: min(170px, 55vw);
-    border-radius: 44px;
+    width: 76px;
+    height: 76px;
+    border-width: 2px;
+    border-radius: 22px;
   }
 
   .wg-shuffle-row {
-    max-width: 100%;
-    gap: 8px;
+    display: none;
   }
 
-  .wg-shuffle-chip {
-    width: min(46px, 13vw);
-    height: min(46px, 13vw);
+  .wg-seg {
+    flex-direction: column;
+  }
+
+  .wg-seg button {
+    width: 100%;
+    min-height: 52px;
+    height: auto;
+    padding: 12px 16px;
   }
 
   .wg-interview {
     gap: 14px;
+  }
+
+  .wg-interview.is-live {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .wg-interview.is-live .wg-transcript {
+    order: -1;
+    min-height: min(360px, 52dvh);
+    max-height: 58dvh;
   }
 
   .wg-mic-panel,
@@ -1434,10 +1458,13 @@ button {
   .wg-consent {
     width: 100%;
     max-width: none;
+    font-size: 15px;
   }
 
   .wg-transcript-log {
     max-height: 52dvh;
+    overscroll-behavior: contain;
+    scroll-behavior: smooth;
   }
 
   .wg-turn .said,
@@ -1546,6 +1573,8 @@ button {
 
   .wg-thankyou {
     width: 100%;
+    max-height: 92dvh;
+    overflow-y: auto;
     border-right: 0;
     border-bottom: 0;
     border-left: 0;
@@ -1657,14 +1686,6 @@ button {
   .wg-read-card {
     padding-right: 14px;
     padding-left: 14px;
-  }
-
-  .wg-seg {
-    flex-direction: column;
-  }
-
-  .wg-seg button {
-    height: 48px;
   }
 
   .wg-convo-head .av {

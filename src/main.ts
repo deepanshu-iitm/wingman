@@ -98,6 +98,7 @@ function loadMatchSeen(sessionId: bigint): boolean {
 // signup
 const signup = { name: "", email: "", age: "", gender: "" };
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const THANK_YOU_KEY = "wingman_thank_you_visible";
 let welcomeEmailRequested = false;
 
 // interview
@@ -117,7 +118,7 @@ let transcriptTurns: { who: "wingman" | "me"; text: string }[] = [
 ];
 let draft: PersonaDraft | null = null;
 let onboardingSubmitted = false;
-let thankYouVisible = false;
+let thankYouVisible = localStorage.getItem(THANK_YOU_KEY) === "1";
 
 // per-conversation message drafts (takeover + post-match chat)
 const inputDrafts: Record<string, string> = {};
@@ -323,7 +324,8 @@ function render() {
       html = renderChat();
       break;
   }
-  app.innerHTML = html;
+  app.innerHTML = html + (thankYouVisible ? renderThankYou() : "");
+  document.body.style.overflow = thankYouVisible ? "hidden" : "";
 
   if (view === "interview") {
     const transcriptLog =
@@ -497,7 +499,7 @@ function renderInterview(): string {
   <div class="wg-screen">
     ${brand}
     ${interviewError ? `<div class="wg-banner err">${escapeHtml(interviewError)}</div>` : ""}
-    <div class="wg-interview">
+    <div class="wg-interview ${recording ? "is-live" : ""}">
       ${micPanel}
       <div class="wg-transcript">
         <div class="wg-eyebrow">The interview</div>
@@ -511,17 +513,19 @@ function renderInterview(): string {
         }
       </div>
     </div>
-    ${thankYouVisible ? renderThankYou() : ""}
   </div>`;
 }
 
 function renderThankYou(): string {
+  const name = signup.name.trim();
   return `
     <div class="wg-overlay">
       <section class="wg-thankyou" role="dialog" aria-modal="true" aria-labelledby="thankyou-title">
         <div class="wg-thankyou-mark">W</div>
         <div class="wg-eyebrow">You’re all set</div>
-        <h2 class="wg-hero" id="thankyou-title">Thank you, ${escapeHtml(signup.name)}.</h2>
+        <h2 class="wg-hero" id="thankyou-title">${
+          name ? `Thank you, ${escapeHtml(name)}.` : "Thank you."
+        }</h2>
         <p class="wg-lead">
           Your Wingman is ready and learning what makes a connection feel right for you.
           We’re thoughtfully preparing the next step and will get back to you soon when
@@ -1105,6 +1109,7 @@ async function handleAction(action: string, el: HTMLElement) {
       break;
     case "dismiss-thankyou":
       thankYouVisible = false;
+      localStorage.removeItem(THANK_YOU_KEY);
       break;
     case "start-match":
       startMatch();
@@ -1180,9 +1185,11 @@ async function createPersonaFromDraft() {
       voiceStyle: draft.voiceStyle,
       speechSample: draft.speechSample,
     });
+    localStorage.setItem(THANK_YOU_KEY, "1");
   } catch (error) {
     onboardingSubmitted = false;
     thankYouVisible = false;
+    localStorage.removeItem(THANK_YOU_KEY);
     watchForNewPersona = false;
     interviewError =
       error instanceof Error ? error.message : "Couldn’t save your Wingman profile.";
@@ -1323,6 +1330,16 @@ app.addEventListener("input", (e) => {
     if (submit) submit.disabled = !typeDraft.trim() || interviewBusy;
   } else if (t.dataset.input) {
     inputDrafts[t.dataset.input] = t.value;
+  }
+
+  if (t.dataset.field === "name" || t.dataset.field === "email") {
+    const start = app.querySelector<HTMLButtonElement>(
+      '[data-action="to-interview"]',
+    );
+    if (start) {
+      start.disabled =
+        !signup.name.trim() || !EMAIL_PATTERN.test(signup.email.trim());
+    }
   }
 });
 
