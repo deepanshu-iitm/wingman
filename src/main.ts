@@ -1144,6 +1144,9 @@ async function handleAction(action: string, el: HTMLElement) {
 
 async function createPersonaFromDraft() {
   if (!conn || !draft || onboardingSubmitted) return;
+  const existingPersonaIds = new Set(
+    myPersonas().map((persona) => persona.id.toString()),
+  );
   const summary = signup.age || signup.gender
     ? `${draft.summary} (${[signup.age && `${signup.age}`, signup.gender]
         .filter(Boolean)
@@ -1163,6 +1166,31 @@ async function createPersonaFromDraft() {
       voiceStyle: draft.voiceStyle,
       speechSample: draft.speechSample,
     });
+
+    // Reducer completion and subscription delivery are separate events. Wait
+    // briefly for the newly inserted row so the profile screen never opens
+    // without the persona it needs to render its next-step CTA.
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const created = myPersonas().find(
+        (persona) => !existingPersonaIds.has(persona.id.toString()),
+      );
+      if (created) {
+        activePersonaId = created.id;
+        watchForNewPersona = false;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    if (
+      activePersonaId === null ||
+      existingPersonaIds.has(activePersonaId.toString())
+    ) {
+      window.location.reload();
+      return;
+    }
+
     view = "read";
     scheduleRender();
   } catch (error) {
