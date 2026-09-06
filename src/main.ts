@@ -116,6 +116,8 @@ let transcriptTurns: { who: "wingman" | "me"; text: string }[] = [
   },
 ];
 let draft: PersonaDraft | null = null;
+let onboardingSubmitted = false;
+let thankYouVisible = false;
 
 // per-conversation message drafts (takeover + post-match chat)
 const inputDrafts: Record<string, string> = {};
@@ -386,14 +388,14 @@ function renderSignup(): string {
         </button>
       </div>
       <div class="wg-signup-aside">
-        <div class="wg-signup-avatar">${avatarSvg(seed, signup.gender)}</div>
+        <div class="wg-signup-avatar">${avatarSvg(seed)}</div>
         <div>
           <div class="wg-h2">${escapeHtml(signup.name || "Hey there")}<span class="wg-caret"></span></div>
           <p class="wg-lead">Your Wingman does the mingling. You just show up for the ones worth meeting.</p>
         </div>
         <div class="wg-shuffle-row">
           ${["preview-1", "preview-2", "preview-3", "preview-4"]
-            .map((s) => `<div class="wg-shuffle-chip">${avatarSvg(s, signup.gender)}</div>`)
+            .map((s) => `<div class="wg-shuffle-chip">${avatarSvg(s)}</div>`)
             .join("")}
         </div>
       </div>
@@ -403,7 +405,6 @@ function renderSignup(): string {
 
 // ── 02 · Interview ───────────────────────────────────────────────────────────
 function renderInterview(): string {
-  const canCreate = draft !== null;
   const log = transcriptTurns
     .map(
       (t) => `
@@ -448,7 +449,7 @@ function renderInterview(): string {
               interviewBusy
                 ? "Thinking about what you said…"
                 : recording
-                  ? "Tap ✓ when you have shared enough."
+                  ? "Wingman continues automatically. Tap ✓ after at least 3 answers."
                   : "Wingman asks aloud. Answer naturally, then pause for three seconds."
             }
           </p>
@@ -483,13 +484,34 @@ function renderInterview(): string {
         <div class="wg-eyebrow">The interview</div>
         <div class="wg-transcript-log">${log}${partialTurn}${draftBlock}</div>
         ${
-          canCreate
-            ? `<button class="wg-btn" data-action="create-persona">Looks right — build my agent →</button>`
+          onboardingSubmitted
+            ? `<div class="wg-banner">Your Wingman profile is ready. We’ll be in touch soon.</div>`
+            : draft
+              ? `<p class="wg-lead">Finishing your Wingman profile…</p>`
             : `<p class="wg-lead">Wingman turns this into an agent that goes and meets people for you.</p>`
         }
       </div>
     </div>
+    ${thankYouVisible ? renderThankYou() : ""}
   </div>`;
+}
+
+function renderThankYou(): string {
+  return `
+    <div class="wg-overlay">
+      <section class="wg-thankyou" role="dialog" aria-modal="true" aria-labelledby="thankyou-title">
+        <div class="wg-thankyou-mark">W</div>
+        <div class="wg-eyebrow">You’re all set</div>
+        <h2 class="wg-hero" id="thankyou-title">Thank you, ${escapeHtml(signup.name)}.</h2>
+        <p class="wg-lead">
+          Your Wingman is ready and learning what makes a connection feel right for you.
+          We’re thoughtfully preparing the next step and will get back to you soon when
+          there’s someone worth meeting.
+        </p>
+        <p class="wg-thankyou-note">Until then, your Wingman has it from here.</p>
+        <button class="wg-btn" data-action="dismiss-thankyou">Got it</button>
+      </section>
+    </div>`;
 }
 
 // ── 03 · What it heard ───────────────────────────────────────────────────────
@@ -533,22 +555,75 @@ function deriveNodes(p: Persona): { label: string; x: number; y: number }[] {
   }));
 }
 
+// Every anchor corresponds to information captured during onboarding. This
+// keeps the map descriptive instead of presenting hash-derived values as a
+// psychological assessment.
+const PROFILE_ANCHORS = [
+  { label: "Interests", cx: 50, cy: 10 },
+  { label: "Values", cx: 90, cy: 50 },
+  { label: "Social style", cx: 50, cy: 90 },
+  { label: "Voice", cx: 10, cy: 50 },
+];
+
+function renderNeuralGraph(p: Persona): string {
+  const entries = [
+    ...p.interests.slice(0, 2).map((label) => ({ label, anchorIndex: 0 })),
+    ...p.values.slice(0, 2).map((label) => ({ label, anchorIndex: 1 })),
+    ...(p.socialStyle ? [{ label: p.socialStyle, anchorIndex: 2 }] : []),
+    ...(p.voiceStyle ? [{ label: p.voiceStyle, anchorIndex: 3 }] : []),
+  ].slice(0, 6);
+  if (!entries.length) entries.push({ label: "Your profile", anchorIndex: 2 });
+  const W = 400, H = 400;
+  const sx = (pct: number) => Math.round((pct / 100) * W);
+  const sy = (pct: number) => Math.round((pct / 100) * H);
+
+  const usedSlots = [0, 0, 0, 0];
+  const nodes = entries.map(({ label, anchorIndex }) => {
+    const anchor = PROFILE_ANCHORS[anchorIndex];
+    const slot = usedSlots[anchorIndex]++;
+    const offset = (slot - 0.5) * 14;
+    const verticalAnchor = anchorIndex === 0 || anchorIndex === 2;
+    return {
+      label: label.length > 24 ? `${label.slice(0, 23)}…` : label,
+      anchorIndex,
+      cx: verticalAnchor ? 50 + offset : (anchor.cx + 50) / 2,
+      cy: verticalAnchor ? (anchor.cy + 50) / 2 : 50 + offset,
+    };
+  });
+
+  const youCx = Math.round(nodes.reduce((s, n) => s + n.cx, 0) / nodes.length);
+  const youCy = Math.round(nodes.reduce((s, n) => s + n.cy, 0) / nodes.length);
+
+  const profileEdges = nodes.map((node) => {
+    const anchor = PROFILE_ANCHORS[node.anchorIndex];
+    return `<line x1="${sx(node.cx)}" y1="${sy(node.cy)}" x2="${sx(anchor.cx)}" y2="${sy(anchor.cy)}" stroke="#16130e" stroke-width="1.2" stroke-opacity="0.35"/>`;
+  });
+
+  const anchorNodes = PROFILE_ANCHORS.map(
+    (t) =>
+      `<g><circle cx="${sx(t.cx)}" cy="${sy(t.cy)}" r="32" fill="#ffb020" stroke="#16130e" stroke-width="1.5"/><text x="${sx(t.cx)}" y="${sy(t.cy)}" dominant-baseline="middle" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="11" font-weight="700" fill="#16130e">${t.label}</text></g>`
+  ).join("");
+
+  const interestNodes = nodes.map((n) => {
+    const w = Math.max(62, n.label.length * 7 + 22);
+    return `<g><rect x="${sx(n.cx) - Math.round(w / 2)}" y="${sy(n.cy) - 14}" width="${w}" height="28" rx="14" fill="#ffffff" stroke="#16130e" stroke-width="1.5"/><text x="${sx(n.cx)}" y="${sy(n.cy)}" dominant-baseline="middle" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="12" font-weight="700" fill="#16130e">${escapeHtml(n.label)}</text></g>`;
+  }).join("");
+
+  return `<svg class="wg-neural" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${profileEdges.join("")}${anchorNodes}${interestNodes}<circle cx="${sx(youCx)}" cy="${sy(youCy)}" r="9" fill="#ff5c42" stroke="#16130e" stroke-width="2"/></svg>`;
+}
+
 function renderRead(): string {
   const p = activePersona();
   if (!p) return renderLoading("Shaping your agent…");
 
   const traits = deriveTraits(p);
-  const nodes = deriveNodes(p);
-  // "here" marker sits at the centroid of the plotted nodes.
-  const hereX = Math.round(nodes.reduce((s, n) => s + n.x, 0) / nodes.length);
-  const hereY = Math.round(nodes.reduce((s, n) => s + n.y, 0) / nodes.length);
 
   return `
   <div class="wg-screen">
     ${brand}
     <div class="wg-read">
       <div class="wg-read-card">
-        <div class="wg-read-avatar">${avatarSvg(characterFor(p.id))}</div>
+        <div class="wg-read-avatar">${avatarSvg(p.displayName)}</div>
         <div>
           <div class="wg-eyebrow">Your agent</div>
           <div class="wg-h2">${escapeHtml(p.displayName)}</div>
@@ -584,21 +659,13 @@ function renderRead(): string {
           <p class="wg-lead">Style read: <strong>${escapeHtml(p.socialStyle)}</strong></p>
         </div>
         <div class="wg-read-card">
-          <div class="wg-eyebrow">Your mental model</div>
+          <div class="wg-eyebrow">Your profile map</div>
           <div class="wg-map">
-            <div class="wg-map-axis" style="left:12px;top:8px">Head</div>
-            <div class="wg-map-axis" style="right:12px;bottom:8px">Heart</div>
-            ${nodes
-              .map(
-                (n) =>
-                  `<div class="wg-map-node" style="left:${n.x}%;top:${n.y}%">${n.label}</div>`,
-              )
-              .join("")}
-            <div class="wg-map-here" style="left:${hereX}%;top:${hereY}%"></div>
+            ${renderNeuralGraph(p)}
           </div>
         </div>
         <button class="wg-btn wg-btn-green" data-action="start-match">
-          Send my agent in → <span class="sub">meet the room</span>
+          Find my most compatible match →
         </button>
       </div>
     </div>
@@ -614,24 +681,24 @@ function renderRoom(): string {
 
   const seeds =
     convos.length > 0
-      ? convos.map((c) => c.partnerPersonaId)
+      ? convos.map((c) => c.partnerDisplayName)
       : conn
-        ? [...conn.db.publicPersona.iter()].slice(0, 8).map((p) => p.id)
+        ? [...conn.db.publicPersona.iter()].slice(0, 8).map((p) => p.displayName)
         : [];
-  const orbiters = (seeds.length > 0 ? seeds : [1n, 2n, 3n, 4n, 5n, 6n]).slice(
+  const orbiters = (seeds.length > 0
+    ? seeds
+    : ["one", "two", "three", "four", "five", "six"]).slice(
     0,
     10,
   );
 
-  const ring = (list: bigint[], radius: number) =>
+  const ring = (list: string[], radius: number) =>
     list
       .map((seed, i) => {
         const a = (i / list.length) * Math.PI * 2;
         const x = 50 + Math.cos(a) * radius;
         const y = 50 + Math.sin(a) * radius;
-        return `<div class="wg-orbiter" style="left:${x}%;top:${y}%">${avatarSvg(
-          characterFor(seed),
-        )}</div>`;
+        return `<div class="wg-orbiter" style="left:${x}%;top:${y}%">${avatarSvg(seed)}</div>`;
       })
       .join("");
 
@@ -723,7 +790,7 @@ function renderConvoCard(c: Conversation): string {
   return `
     <div class="wg-convo">
       <div class="wg-convo-head">
-        <div class="wg-av av">${avatarSvg(characterFor(c.partnerPersonaId))}</div>
+        <div class="wg-av av">${avatarSvg(c.partnerDisplayName)}</div>
         <div class="wg-convo-name">
           <div class="n">${escapeHtml(c.partnerDisplayName)}</div>
           <div class="t">turn ${done} of ${total}</div>
@@ -757,10 +824,12 @@ function renderBubble(
   const mine = m.senderPersonaId === c.initiatorPersonaId;
   const human = m.source === "human";
   const cls = human ? "human" : mine ? "mine" : "";
-  const seed = mine ? c.initiatorPersonaId : c.partnerPersonaId;
+  const seed = mine
+    ? activePersona()?.displayName ?? c.initiatorPersonaId
+    : c.partnerDisplayName;
   return `
     <div class="wg-bubble ${cls}">
-      <div class="chip">${avatarSvg(characterFor(seed))}</div>
+      <div class="chip">${avatarSvg(seed)}</div>
       <div class="text">${escapeHtml(m.content)}</div>
     </div>`;
 }
@@ -770,21 +839,24 @@ function renderChatBubble(
   c: Conversation,
 ): string {
   const mine = m.senderPersonaId === c.initiatorPersonaId;
-  const seed = mine ? c.initiatorPersonaId : c.partnerPersonaId;
+  const seed = mine
+    ? activePersona()?.displayName ?? c.initiatorPersonaId
+    : c.partnerDisplayName;
   return `
     <div class="wg-bubble ${mine ? "mine" : "partner"}">
-      <div class="chip">${avatarSvg(characterFor(seed))}</div>
+      <div class="chip">${avatarSvg(seed)}</div>
       <div class="text">${escapeHtml(m.content)}</div>
     </div>`;
 }
 
 function startPresenceHeartbeat() {
-  if (!conn) return;
-  // pingPresence is a no-arg reducer; cast to bypass generated typed wrapper
-  (conn.reducers as any).pingPresence?.();
+  if (!conn || activePersonaId === null) return;
+  conn.reducers.pingPresence({ personaId: activePersonaId });
   if (presenceHeartbeat !== null) clearInterval(presenceHeartbeat);
   presenceHeartbeat = setInterval(() => {
-    if (conn) (conn.reducers as any).pingPresence?.();
+    if (conn && activePersonaId !== null) {
+      conn.reducers.pingPresence({ personaId: activePersonaId });
+    }
   }, 30_000);
 }
 
@@ -826,7 +898,7 @@ function renderOverlay(): string {
   <div class="wg-overlay" data-action="overlay-bg">
     <div class="wg-expanded ${controlledByMe ? "human" : ""}">
       <div class="wg-expanded-head">
-        <div class="wg-av av">${avatarSvg(characterFor(c.partnerPersonaId))}</div>
+        <div class="wg-av av">${avatarSvg(c.partnerDisplayName)}</div>
         <div style="flex:1">
           <div style="font-size:19px;font-weight:800">${escapeHtml(c.partnerDisplayName)}</div>
           <div style="font-size:13px;opacity:.7">${controlledByMe ? "you're driving" : sig.label}</div>
@@ -869,8 +941,8 @@ function renderMatch(): string {
     ${confetti}
     <div class="wg-match-eyebrow"><span class="wg-dot"></span> it's mutual</div>
     <div class="wg-match-pair">
-      <div class="p">${avatarSvg(characterFor(p?.id ?? "you"))}</div>
-      <div class="p">${avatarSvg(characterFor(top.partnerPersonaId))}</div>
+      <div class="p">${avatarSvg(p?.displayName ?? "you")}</div>
+      <div class="p">${avatarSvg(top.partnerDisplayName)}</div>
     </div>
     <div class="wg-match-title">It's a match.</div>
     <div class="wg-match-sub">You and ${escapeHtml(firstName(top.partnerDisplayName))} both said yes.</div>
@@ -932,7 +1004,7 @@ function renderChat(): string {
     <div class="wg-chat">
       <div class="wg-chat-head">
         <button class="wg-close" data-action="back-to-match">←</button>
-        <div class="wg-av av" style="width:44px;height:44px">${avatarSvg(characterFor(c.partnerPersonaId))}</div>
+        <div class="wg-av av" style="width:44px;height:44px">${avatarSvg(c.partnerDisplayName)}</div>
         <div style="flex:1">
           <div style="font-size:19px;font-weight:800">${escapeHtml(c.partnerDisplayName)}</div>
           <div class="wg-privacy">you matched</div>
@@ -995,6 +1067,7 @@ async function handleAction(action: string, el: HTMLElement) {
   switch (action) {
     case "to-interview":
       view = "interview";
+      void requestWelcomeEmail();
       break;
     case "switch-type":
       interviewMode = "type";
@@ -1010,6 +1083,9 @@ async function handleAction(action: string, el: HTMLElement) {
       return;
     case "create-persona":
       await createPersonaFromDraft();
+      break;
+    case "dismiss-thankyou":
+      thankYouVisible = false;
       break;
     case "start-match":
       startMatch();
@@ -1064,39 +1140,56 @@ async function handleAction(action: string, el: HTMLElement) {
 }
 
 async function createPersonaFromDraft() {
-  if (!conn || !draft) return;
+  if (!conn || !draft || onboardingSubmitted) return;
   const summary = signup.age || signup.gender
     ? `${draft.summary} (${[signup.age && `${signup.age}`, signup.gender]
         .filter(Boolean)
         .join(", ")}.)`
     : draft.summary;
+  onboardingSubmitted = true;
+  thankYouVisible = true;
   watchForNewPersona = true;
-  await conn.reducers.createPersona({
-    displayName: draft.displayName || signup.name.trim(),
-    summary,
-    interests: draft.interests,
-    values: draft.values,
-    socialStyle: draft.socialStyle,
-    voiceStyle: draft.voiceStyle,
-    speechSample: draft.speechSample,
-  });
+  scheduleRender();
 
-  if (!welcomeEmailRequested) {
-    welcomeEmailRequested = true;
-    try {
-      const response = await fetch(`${ORCHESTRATOR_URL}/api/welcome`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: signup.email.trim(),
-          displayName: signup.name.trim(),
-        }),
-      });
-      if (!response.ok) throw new Error(`Welcome email failed (${response.status})`);
-    } catch (error) {
-      welcomeEmailRequested = false;
-      console.warn("Welcome email could not be sent.", error);
-    }
+  try {
+    await conn.reducers.createPersona({
+      displayName: draft.displayName || signup.name.trim(),
+      summary,
+      interests: draft.interests,
+      values: draft.values,
+      socialStyle: draft.socialStyle,
+      voiceStyle: draft.voiceStyle,
+      speechSample: draft.speechSample,
+    });
+  } catch (error) {
+    onboardingSubmitted = false;
+    thankYouVisible = false;
+    watchForNewPersona = false;
+    interviewError =
+      error instanceof Error ? error.message : "Couldn’t save your Wingman profile.";
+    scheduleRender();
+    return;
+  }
+
+  await requestWelcomeEmail();
+}
+
+async function requestWelcomeEmail() {
+  if (welcomeEmailRequested || !EMAIL_PATTERN.test(signup.email.trim())) return;
+  welcomeEmailRequested = true;
+  try {
+    const response = await fetch(`${ORCHESTRATOR_URL}/api/welcome`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: signup.email.trim(),
+        displayName: signup.name.trim(),
+      }),
+    });
+    if (!response.ok) throw new Error(`Welcome email failed (${response.status})`);
+  } catch (error) {
+    welcomeEmailRequested = false;
+    console.warn("Welcome email could not be sent.", error);
   }
 }
 
@@ -1393,7 +1486,7 @@ function handleInterviewMessage(message: InterviewMessage) {
       await releaseMicrophone();
       interviewSocket?.close();
       interviewSocket = null;
-      scheduleRender();
+      await createPersonaFromDraft();
     })();
   } else if (message.type === "error") {
     interviewBusy = false;
@@ -1570,6 +1663,7 @@ async function extractPersona(transcript: string) {
     voiceStyle: persona.voiceStyle ?? "",
     speechSample: persona.speechSample ?? "",
   };
+  await createPersonaFromDraft();
 }
 
 // ── Connect ──────────────────────────────────────────────────────────────────
@@ -1632,7 +1726,6 @@ const builder = DbConnection.builder()
       if (watchForNewPersona && myIdentity && row.owner.equals(myIdentity)) {
         activePersonaId = row.id;
         watchForNewPersona = false;
-        view = "read";
       }
       scheduleRender();
     });

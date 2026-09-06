@@ -86,6 +86,21 @@ function phaseGuidance(phase: ConversationPhase, otherName: string): string {
   }
 }
 
+function boundAgentMessage(message: string, maxLength = 150): string {
+  const normalized = message.trim();
+  if (normalized.length <= maxLength) return normalized;
+
+  const candidate = normalized.slice(0, maxLength + 1);
+  const sentenceMatches = [...candidate.matchAll(/[.!?](?=\s|$)/g)];
+  const sentenceEnd = sentenceMatches.at(-1)?.index;
+  if (sentenceEnd !== undefined && sentenceEnd >= Math.floor(maxLength * 0.55)) {
+    return candidate.slice(0, sentenceEnd + 1);
+  }
+
+  const wordEnd = candidate.lastIndexOf(' ', maxLength - 1);
+  return `${candidate.slice(0, Math.max(1, wordEnd)).trimEnd()}…`;
+}
+
 export async function generateAgentTurn(
   persona: PersonaDraft,
   otherDisplayName: string,
@@ -117,8 +132,10 @@ export async function generateAgentTurn(
             `Sound like a real person mid-conversation:\n` +
             `- Match their voice below — cadence, humor, slang, and their natural filler words ` +
             `and disfluencies (um, like, haha, "I mean", trailing off). Don't over-polish.\n` +
-            `- Use contractions and casual, texting-length messages. Vary the length — sometimes ` +
-            `a quick quip, sometimes a couple of sentences. Keep it under ~400 characters.\n` +
+            `- Use contractions and casual, texting-length messages. Keep it short — under ~150 ` +
+            `characters per message, like a real WhatsApp chat. Only use slang or conversational ` +
+            `markers that are supported by the person's captured voice sample; never add them ` +
+            `because of an assumed culture or location.\n` +
             `- Be genuinely playful and warm: react to what they said, build on it, tease a little.\n` +
             `- Ask a real question only when you're actually curious, grounded in your own ` +
             `interests/values or in what they just shared. Don't interrogate.\n\n` +
@@ -160,5 +177,5 @@ export async function generateAgentTurn(
       ? parsed.intent
       : 'continue';
 
-  return { message: parsed.message.trim().slice(0, 400), intent };
+  return { message: boundAgentMessage(parsed.message), intent };
 }

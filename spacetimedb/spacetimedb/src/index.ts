@@ -235,25 +235,26 @@ export const init = spacetimedb.init(ctx => {
   });
 });
 export const onConnect = spacetimedb.clientConnected(_ctx => {});
-export const onDisconnect = spacetimedb.clientDisconnected((ctx: Ctx) => {
-  const p = [...ctx.db.persona.owner.filter(ctx.sender)][0];
-  if (!p) return;
-  if (ctx.db.chat_presence.personaId.find(p.id)) {
-    ctx.db.chat_presence.personaId.delete(p.id);
-  }
-});
+// Presence expires from its heartbeat timestamp. Deleting a persona-level row
+// here would incorrectly mark another active tab for the same identity offline.
+export const onDisconnect = spacetimedb.clientDisconnected(_ctx => {});
 
 /** Upsert a presence heartbeat for the calling user's persona. */
-export const pingPresence = spacetimedb.reducer((ctx: Ctx) => {
-  const p = [...ctx.db.persona.owner.filter(ctx.sender)][0];
-  if (!p) return;
-  const existing = ctx.db.chat_presence.personaId.find(p.id);
-  if (existing) {
-    ctx.db.chat_presence.personaId.update({ ...existing, updatedAt: ctx.timestamp });
-  } else {
-    ctx.db.chat_presence.insert({ personaId: p.id, updatedAt: ctx.timestamp });
+export const pingPresence = spacetimedb.reducer(
+  { personaId: t.u64() },
+  (ctx, { personaId }) => {
+    const persona = ctx.db.persona.id.find(personaId);
+    if (!persona) throw new SenderError('persona not found');
+    if (!persona.owner.equals(ctx.sender)) throw new SenderError('not your persona');
+
+    const existing = ctx.db.chat_presence.personaId.find(personaId);
+    if (existing) {
+      ctx.db.chat_presence.personaId.update({ ...existing, updatedAt: ctx.timestamp });
+    } else {
+      ctx.db.chat_presence.insert({ personaId, updatedAt: ctx.timestamp });
+    }
   }
-});
+);
 
 // ── Views: scoped persona access ─────────────────────────────────────────────────
 

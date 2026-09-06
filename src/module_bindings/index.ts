@@ -39,6 +39,7 @@ import ArchiveConversationReducer from "./archive_conversation_reducer";
 import CompleteConversationReducer from "./complete_conversation_reducer";
 import CreatePersonaReducer from "./create_persona_reducer";
 import FinalizeSessionReducer from "./finalize_session_reducer";
+import PingPresenceReducer from "./ping_presence_reducer";
 import RegisterOrchestratorReducer from "./register_orchestrator_reducer";
 import ReleaseConversationReducer from "./release_conversation_reducer";
 import SendHumanMessageReducer from "./send_human_message_reducer";
@@ -66,7 +67,9 @@ const tablesSchema = __schema({
   chatPresence: __table({
     name: 'chat_presence',
     indexes: [
-      { accessor: 'personaId', name: 'chat_presence_persona_id_idx_btree', algorithm: 'btree', columns: ['personaId'] },
+      { accessor: 'personaId', name: 'chat_presence_persona_id_idx_btree', algorithm: 'btree', columns: [
+        'personaId',
+      ] },
     ],
     constraints: [
       { name: 'chat_presence_persona_id_key', constraint: 'unique', columns: ['personaId'] },
@@ -158,6 +161,7 @@ const reducersSchema = __reducers(
   __reducerSchema("complete_conversation", CompleteConversationReducer),
   __reducerSchema("create_persona", CreatePersonaReducer),
   __reducerSchema("finalize_session", FinalizeSessionReducer),
+  __reducerSchema("ping_presence", PingPresenceReducer),
   __reducerSchema("register_orchestrator", RegisterOrchestratorReducer),
   __reducerSchema("release_conversation", ReleaseConversationReducer),
   __reducerSchema("send_human_message", SendHumanMessageReducer),
@@ -173,6 +177,8 @@ const proceduresSchema = __procedures(
 
 type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "tables"> & {
   tables: typeof tablesSchema.schemaType.tables & {
+    /** @deprecated Use `chatPresence` instead. This alias will be removed in the next major version. */
+    readonly "chat_presence": Omit<typeof tablesSchema.schemaType.tables["chatPresence"], "accessorName"> & { readonly accessorName: "chat_presence" };
     /** @deprecated Use `matchResult` instead. This alias will be removed in the next major version. */
     readonly "match_result": Omit<typeof tablesSchema.schemaType.tables["matchResult"], "accessorName"> & { readonly accessorName: "match_result" };
     /** @deprecated Use `matchSession` instead. This alias will be removed in the next major version. */
@@ -195,6 +201,7 @@ const REMOTE_MODULE = {
 >;
 
 const tableAccessorAliases = {
+  "chat_presence": "chatPresence",
   "match_result": "matchResult",
   "match_session": "matchSession",
 } as const;
@@ -217,6 +224,8 @@ function __withTableAccessorAliases<T extends object>(target: T, freeze = false)
 
 type __DbViewBase = __DbConnectionImpl<typeof REMOTE_MODULE>["db"];
 export type DbView = __DbViewBase & {
+  /** @deprecated Use `chatPresence` instead. This alias will be removed in the next major version. */
+  readonly "chat_presence": __DbViewBase["chatPresence"];
   /** @deprecated Use `matchResult` instead. This alias will be removed in the next major version. */
   readonly "match_result": __DbViewBase["matchResult"];
   /** @deprecated Use `matchSession` instead. This alias will be removed in the next major version. */
@@ -225,6 +234,8 @@ export type DbView = __DbViewBase & {
 
 type __TablesBase = __QueryBuilder<typeof tablesSchema.schemaType>;
 export type Tables = __TablesBase & {
+  /** @deprecated Use `chatPresence` instead. This alias will be removed in the next major version. */
+  readonly "chat_presence": __TablesBase["chatPresence"];
   /** @deprecated Use `matchResult` instead. This alias will be removed in the next major version. */
   readonly "match_result": __TablesBase["matchResult"];
   /** @deprecated Use `matchSession` instead. This alias will be removed in the next major version. */
