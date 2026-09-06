@@ -192,6 +192,40 @@ function activePersona() {
   );
 }
 
+function refreshAndAdoptNewestPersona(): Promise<void> {
+  if (!conn) return Promise.reject(new Error("Not connected"));
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeout = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("Your profile was saved, but loading it timed out. Try again."));
+    }, 8_000);
+
+    conn!
+      .subscriptionBuilder()
+      .onApplied(() => {
+        if (settled) return;
+        const mine = myPersonas();
+        const newest = mine[mine.length - 1];
+        if (!newest) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        activePersonaId = newest.id;
+        watchForNewPersona = false;
+        resolve();
+      })
+      .onError(() => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        reject(new Error("Your profile was saved, but could not be loaded."));
+      })
+      .subscribe(["SELECT * FROM my_persona"]);
+  });
+}
+
 function activeSession() {
   if (!conn || activeSessionId === null) return null;
   return conn.db.matchSession.id.find(activeSessionId) ?? null;
@@ -1169,6 +1203,9 @@ async function createPersonaFromDraft() {
       voiceStyle: draft.voiceStyle,
       speechSample: draft.speechSample,
     });
+    if (watchForNewPersona) await refreshAndAdoptNewestPersona();
+    view = "read";
+    scheduleRender();
   } catch (error) {
     onboardingSubmitted = false;
     watchForNewPersona = false;
