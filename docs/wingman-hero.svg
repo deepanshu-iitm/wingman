@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500" viewBox="0 0 1200 500" role="img" aria-labelledby="title desc">
+  <title id="title">Wingman - your agent meets people before you do</title>
+  <desc id="desc">A colorful Wingman banner showing the voice, persona, agent conversation, and match flow.</desc>
+  <defs>
+    <linearGradient id="field" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFB020"/>
+      <stop offset="0.58" stop-color="#FFB020"/>
+      <stop offset="1" stop-color="#FF5C42"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="8" stdDeviation="0" flood-color="#16130E"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="500" rx="34" fill="url(#field)"/>
+  <circle cx="1080" cy="62" r="124" fill="#C9F24D" opacity=".78"/>
+  <circle cx="1130" cy="430" r="190" fill="#7B4DFF" opacity=".72"/>
+  <circle cx="78" cy="448" r="132" fill="#2E8B8B" opacity=".8"/>
+
+  <g transform="translate(70 58)">
+    <rect width="64" height="64" rx="20" fill="#16130E"/>
+    <text x="32" y="44" text-anchor="middle" font-family="Arial, sans-serif" font-size="34" font-weight="800" fill="#FFB020">W</text>
+    <text x="84" y="44" font-family="Arial, sans-serif" font-size="30" font-weight="800" fill="#16130E">WINGMAN</text>
+  </g>
+
+  <text x="70" y="205" font-family="Arial, sans-serif" font-size="66" font-weight="900" letter-spacing="-2.5" fill="#16130E">
+    Your agent meets people
+  </text>
+  <text x="70" y="277" font-family="Arial, sans-serif" font-size="66" font-weight="900" letter-spacing="-2.5" fill="#16130E">
+    before you do.
+  </text>
+  <text x="73" y="325" font-family="Georgia, serif" font-size="23" font-style="italic" fill="#3B3024">
+    Speak naturally. Build a real persona. Let your Wingman find the click.
+  </text>
+
+  <g transform="translate(72 375)" font-family="Arial, sans-serif" font-size="16" font-weight="800">
+    <g filter="url(#shadow)">
+      <rect width="170" height="48" rx="15" fill="#FAF6EF" stroke="#16130E" stroke-width="2"/>
+      <text x="85" y="30" text-anchor="middle" fill="#16130E">01 / SPEAK</text>
+    </g>
+    <path d="M184 24h38" stroke="#16130E" stroke-width="3"/>
+    <path d="m216 17 9 7-9 7" fill="none" stroke="#16130E" stroke-width="3"/>
+
+    <g transform="translate(238)" filter="url(#shadow)">
+      <rect width="180" height="48" rx="15" fill="#C9F24D" stroke="#16130E" stroke-width="2"/>
+      <text x="90" y="30" text-anchor="middle" fill="#16130E">02 / PERSONA</text>
+    </g>
+    <path d="M432 24h38" stroke="#16130E" stroke-width="3"/>
+    <path d="m464 17 9 7-9 7" fill="none" stroke="#16130E" stroke-width="3"/>
+
+    <g transform="translate(486)" filter="url(#shadow)">
+      <rect width="188" height="48" rx="15" fill="#FAF6EF" stroke="#16130E" stroke-width="2"/>
+      <text x="94" y="30" text-anchor="middle" fill="#16130E">03 / MINGLE</text>
+    </g>
+    <path d="M688 24h38" stroke="#16130E" stroke-width="3"/>
+    <path d="m720 17 9 7-9 7" fill="none" stroke="#16130E" stroke-width="3"/>
+
+    <g transform="translate(742)" filter="url(#shadow)">
+      <rect width="170" height="48" rx="15" fill="#FF5C42" stroke="#16130E" stroke-width="2"/>
+      <text x="85" y="30" text-anchor="middle" fill="#FAF6EF">04 / MATCH</text>
+    </g>
+  </g>
+
+  <g transform="translate(1010 172)">
+    <circle cx="0" cy="0" r="62" fill="#FAF6EF" stroke="#16130E" stroke-width="5"/>
+    <circle cx="0" cy="-8" r="24" fill="#FFB020" stroke="#16130E" stroke-width="4"/>
+    <path d="M-35 42c4-34 66-34 70 0" fill="#2E8B8B" stroke="#16130E" stroke-width="4"/>
+    <circle cx="74" cy="82" r="62" fill="#C9F24D" stroke="#16130E" stroke-width="5"/>
+    <circle cx="74" cy="74" r="24" fill="#FF5C42" stroke="#16130E" stroke-width="4"/>
+    <path d="M39 124c4-34 66-34 70 0" fill="#7B4DFF" stroke="#16130E" stroke-width="4"/>
+    <path d="M26 38C56 48 64 55 72 70" fill="none" stroke="#16130E" stroke-width="5" stroke-dasharray="8 9"/>
+    <path d="m63 61 12 11-15 4" fill="#16130E"/>
+  </g>
+</svg>
