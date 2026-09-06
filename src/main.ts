@@ -1163,6 +1163,8 @@ async function createPersonaFromDraft() {
       voiceStyle: draft.voiceStyle,
       speechSample: draft.speechSample,
     });
+    view = "read";
+    scheduleRender();
   } catch (error) {
     onboardingSubmitted = false;
     watchForNewPersona = false;
