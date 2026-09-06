@@ -516,7 +516,7 @@ function renderInterview(): string {
           onboardingSubmitted
             ? `<div class="wg-banner">Your Wingman profile is ready. We’ll be in touch soon.</div>`
             : draft
-              ? `<p class="wg-lead">Finishing your Wingman profile…</p>`
+              ? `<button class="wg-btn" data-action="create-persona">Looks right — build my agent →</button>`
             : `<p class="wg-lead">Wingman turns this into an agent that goes and meets people for you.</p>`
         }
       </div>
@@ -1543,7 +1543,7 @@ function handleInterviewMessage(message: InterviewMessage) {
       await releaseMicrophone();
       interviewSocket?.close();
       interviewSocket = null;
-      await createPersonaFromDraft();
+      scheduleRender();
     })();
   } else if (message.type === "error") {
     interviewBusy = false;
