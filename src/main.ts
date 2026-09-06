@@ -325,6 +325,19 @@ function render() {
   }
   app.innerHTML = html;
 
+  if (view === "interview") {
+    const transcriptLog =
+      app.querySelector<HTMLElement>(".wg-transcript-log");
+    if (transcriptLog) {
+      transcriptLog.scrollTop = transcriptLog.scrollHeight;
+      if (window.matchMedia("(max-width: 860px)").matches) {
+        transcriptLog
+          .querySelector<HTMLElement>("[data-transcript-end]")
+          ?.scrollIntoView({ block: "nearest" });
+      }
+    }
+  }
+
   if (focusKey) {
     const el = app.querySelector<HTMLInputElement>(
       `[data-focus="${focusKey}"]`,
@@ -429,13 +442,15 @@ function renderInterview(): string {
         <div class="said">Here's what I heard — <strong>${escapeHtml(draft.summary)}</strong></div>
       </div>`
     : "";
+  const transcriptEnd = `<span class="wg-transcript-end" data-transcript-end aria-hidden="true"></span>`;
 
   const micPanel =
     interviewMode === "voice"
       ? `
       <div class="wg-mic-panel">
-        <button class="wg-mic-orb ${recording ? "live" : ""}" data-action="mic"
-          ${!voiceConsent && !recording ? "disabled" : ""}>${recording ? "✓" : "🎙"}</button>
+        <div class="wg-mic-orb ${recording ? "live" : ""}" aria-hidden="true">
+          ${recording ? "✓" : "🎙"}
+        </div>
         <div>
           <div class="wg-h2" style="color:var(--cream)">${
             captureEnabled
@@ -455,10 +470,14 @@ function renderInterview(): string {
           </p>
         </div>
         <label class="wg-consent">
-          <input type="checkbox" data-field="voice-consent" ${voiceConsent ? "checked" : ""} />
-          I consent to live transcription and storing a short speech excerpt to shape my agent's
-          writing style. Raw audio is not stored.
+          <input type="checkbox" data-field="voice-consent" ${voiceConsent ? "checked" : ""}
+            ${recording ? "disabled" : ""} />
+          <span>I consent to live transcription and a short text excerpt. Audio isn’t stored.</span>
         </label>
+        <button class="wg-btn wg-btn-green wg-voice-cta" data-action="mic"
+          ${!voiceConsent && !recording ? "disabled" : ""}>
+          ${recording ? "Finish interview" : "Start conversation"}
+        </button>
         <button class="wg-btn-ghost wg-btn wg-btn-sm" style="color:var(--cream);border-color:var(--cream)"
           data-action="switch-type" ${recording ? "disabled" : ""}>Rather type it</button>
       </div>`
@@ -482,7 +501,7 @@ function renderInterview(): string {
       ${micPanel}
       <div class="wg-transcript">
         <div class="wg-eyebrow">The interview</div>
-        <div class="wg-transcript-log">${log}${partialTurn}${draftBlock}</div>
+        <div class="wg-transcript-log">${log}${partialTurn}${draftBlock}${transcriptEnd}</div>
         ${
           onboardingSubmitted
             ? `<div class="wg-banner">Your Wingman profile is ready. We’ll be in touch soon.</div>`
@@ -1298,6 +1317,10 @@ app.addEventListener("input", (e) => {
     scheduleRender();
   } else if (t.dataset.field === "type") {
     typeDraft = t.value;
+    const submit = app.querySelector<HTMLButtonElement>(
+      '[data-action="submit-type"]',
+    );
+    if (submit) submit.disabled = !typeDraft.trim() || interviewBusy;
   } else if (t.dataset.input) {
     inputDrafts[t.dataset.input] = t.value;
   }
