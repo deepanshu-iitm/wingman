@@ -283,11 +283,11 @@ function placeholderTurn(
       return `Nice! Been really into ${myInterest} lately. You?`;
     case 2:
       return commonInterest
-        ? `Wait, ${commonInterest} too? Same yaar! What got you into it?`
+        ? `Wait, ${commonInterest} too? Same here! What got you into it?`
         : `Nice — I love ${myInterest}. Could talk about it forever.`;
     case 3:
       return commonInterest
-        ? `Ha, love that we overlap. Been at it a couple years na.`
+        ? `Ha, love that we overlap. Been at it a couple years now.`
         : `Sounds fun! What's your favourite part about it?`;
     case 4:
       return `What do you look for in people you actually want to hang out with?`;

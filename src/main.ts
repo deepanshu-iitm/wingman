@@ -554,56 +554,51 @@ function deriveNodes(p: Persona): { label: string; x: number; y: number }[] {
   }));
 }
 
-// Four trait axes that anchor the personality graph. Each interest/value node
-// is positioned as a weighted centroid of these axes based on hash-derived affinities.
-const NEURAL_TRAITS = [
-  { label: "Openness", cx: 50, cy: 10 },
-  { label: "Warmth",   cx: 90, cy: 50 },
-  { label: "Depth",    cx: 50, cy: 90 },
-  { label: "Wit",      cx: 10, cy: 50 },
+// Every anchor corresponds to information captured during onboarding. This
+// keeps the map descriptive instead of presenting hash-derived values as a
+// psychological assessment.
+const PROFILE_ANCHORS = [
+  { label: "Interests", cx: 50, cy: 10 },
+  { label: "Values", cx: 90, cy: 50 },
+  { label: "Social style", cx: 50, cy: 90 },
+  { label: "Voice", cx: 10, cy: 50 },
 ];
 
 function renderNeuralGraph(p: Persona): string {
-  const labels = [...p.interests.slice(0, 3), ...p.values.slice(0, 3)].slice(0, 5);
-  if (!labels.length) labels.push(p.socialStyle || "You");
+  const entries = [
+    ...p.interests.slice(0, 2).map((label) => ({ label, anchorIndex: 0 })),
+    ...p.values.slice(0, 2).map((label) => ({ label, anchorIndex: 1 })),
+    ...(p.socialStyle ? [{ label: p.socialStyle, anchorIndex: 2 }] : []),
+    ...(p.voiceStyle ? [{ label: p.voiceStyle, anchorIndex: 3 }] : []),
+  ].slice(0, 6);
+  if (!entries.length) entries.push({ label: "Your profile", anchorIndex: 2 });
   const W = 400, H = 400;
   const sx = (pct: number) => Math.round((pct / 100) * W);
   const sy = (pct: number) => Math.round((pct / 100) * H);
 
-  const nodes = labels.map((label) => {
-    const affinities = NEURAL_TRAITS.map((t) => inRange(label + t.label, 20, 100));
-    const total = affinities.reduce((s, a) => s + a, 0);
-    const weights = affinities.map((a) => a / total);
-    const rawCx = weights.reduce((s, w, i) => s + w * NEURAL_TRAITS[i].cx, 0);
-    const rawCy = weights.reduce((s, w, i) => s + w * NEURAL_TRAITS[i].cy, 0);
-    const cx = Math.max(28, Math.min(72, Math.round(rawCx)));
-    const cy = Math.max(28, Math.min(72, Math.round(rawCy)));
-    const ranked = affinities.map((a, i) => ({ a, i })).sort((x, y) => y.a - x.a);
-    return { label, cx, cy, topTraits: [ranked[0].i, ranked[1].i], affinities };
+  const usedSlots = [0, 0, 0, 0];
+  const nodes = entries.map(({ label, anchorIndex }) => {
+    const anchor = PROFILE_ANCHORS[anchorIndex];
+    const slot = usedSlots[anchorIndex]++;
+    const offset = (slot - 0.5) * 14;
+    const verticalAnchor = anchorIndex === 0 || anchorIndex === 2;
+    return {
+      label: label.length > 24 ? `${label.slice(0, 23)}…` : label,
+      anchorIndex,
+      cx: verticalAnchor ? 50 + offset : (anchor.cx + 50) / 2,
+      cy: verticalAnchor ? (anchor.cy + 50) / 2 : 50 + offset,
+    };
   });
 
   const youCx = Math.round(nodes.reduce((s, n) => s + n.cx, 0) / nodes.length);
   const youCy = Math.round(nodes.reduce((s, n) => s + n.cy, 0) / nodes.length);
 
-  const traitEdges = nodes.flatMap((n) =>
-    n.topTraits.map((ti) => {
-      const t = NEURAL_TRAITS[ti];
-      const op = ((n.affinities[ti] / 100) * 0.55 + 0.1).toFixed(2);
-      return `<line x1="${sx(n.cx)}" y1="${sy(n.cy)}" x2="${sx(t.cx)}" y2="${sy(t.cy)}" stroke="#16130e" stroke-width="1.2" stroke-opacity="${op}"/>`;
-    })
-  );
+  const profileEdges = nodes.map((node) => {
+    const anchor = PROFILE_ANCHORS[node.anchorIndex];
+    return `<line x1="${sx(node.cx)}" y1="${sy(node.cy)}" x2="${sx(anchor.cx)}" y2="${sy(anchor.cy)}" stroke="#16130e" stroke-width="1.2" stroke-opacity="0.35"/>`;
+  });
 
-  const nodeEdges: string[] = [];
-  for (let i = 0; i < nodes.length; i++) {
-    for (let j = i + 1; j < nodes.length; j++) {
-      const dx = nodes[i].cx - nodes[j].cx, dy = nodes[i].cy - nodes[j].cy;
-      if (Math.sqrt(dx * dx + dy * dy) < 28) {
-        nodeEdges.push(`<line x1="${sx(nodes[i].cx)}" y1="${sy(nodes[i].cy)}" x2="${sx(nodes[j].cx)}" y2="${sy(nodes[j].cy)}" stroke="#16130e" stroke-width="0.8" stroke-opacity="0.2" stroke-dasharray="4 3"/>`);
-      }
-    }
-  }
-
-  const traitNodes = NEURAL_TRAITS.map(
+  const anchorNodes = PROFILE_ANCHORS.map(
     (t) =>
       `<g><circle cx="${sx(t.cx)}" cy="${sy(t.cy)}" r="32" fill="#ffb020" stroke="#16130e" stroke-width="1.5"/><text x="${sx(t.cx)}" y="${sy(t.cy)}" dominant-baseline="middle" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="11" font-weight="700" fill="#16130e">${t.label}</text></g>`
   ).join("");
@@ -613,7 +608,7 @@ function renderNeuralGraph(p: Persona): string {
     return `<g><rect x="${sx(n.cx) - Math.round(w / 2)}" y="${sy(n.cy) - 14}" width="${w}" height="28" rx="14" fill="#ffffff" stroke="#16130e" stroke-width="1.5"/><text x="${sx(n.cx)}" y="${sy(n.cy)}" dominant-baseline="middle" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="12" font-weight="700" fill="#16130e">${escapeHtml(n.label)}</text></g>`;
   }).join("");
 
-  return `<svg class="wg-neural" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${traitEdges.join("")}${nodeEdges.join("")}${traitNodes}${interestNodes}<circle cx="${sx(youCx)}" cy="${sy(youCy)}" r="9" fill="#ff5c42" stroke="#16130e" stroke-width="2"/></svg>`;
+  return `<svg class="wg-neural" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${profileEdges.join("")}${anchorNodes}${interestNodes}<circle cx="${sx(youCx)}" cy="${sy(youCy)}" r="9" fill="#ff5c42" stroke="#16130e" stroke-width="2"/></svg>`;
 }
 
 function renderRead(): string {
@@ -663,7 +658,7 @@ function renderRead(): string {
           <p class="wg-lead">Style read: <strong>${escapeHtml(p.socialStyle)}</strong></p>
         </div>
         <div class="wg-read-card">
-          <div class="wg-eyebrow">Your personality graph</div>
+          <div class="wg-eyebrow">Your profile map</div>
           <div class="wg-map">
             ${renderNeuralGraph(p)}
           </div>
