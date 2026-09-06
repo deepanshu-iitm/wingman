@@ -458,9 +458,11 @@ function renderInterview(): string {
     interviewMode === "voice"
       ? `
       <div class="wg-mic-panel">
-        <div class="wg-mic-orb ${recording ? "live" : ""}" aria-hidden="true">
+        <button type="button" class="wg-mic-orb ${recording ? "live" : ""}"
+          data-action="mic" aria-label="${recording ? "Finish interview" : "Start voice interview"}"
+          ${!voiceConsent && !recording ? "disabled" : ""}>
           ${recording ? "✓" : "🎙"}
-        </div>
+        </button>
         <div>
           <div class="wg-h2" style="color:var(--cream)">${
             captureEnabled
