@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   combineTranscriptSegments,
+  openingInterviewPrompt,
   shouldFinalizeInterview,
 } from '../dist/interviewStream.js';
 
@@ -34,4 +35,11 @@ test('requires three answers before honoring an early finish request', () => {
 
 test('automatically finalizes at the maximum answer count', () => {
   assert.equal(shouldFinalizeInterview(5, false), true);
+});
+
+test('opening prompt greets the user by name', () => {
+  assert.equal(
+    openingInterviewPrompt(' Deepanshu ', 'What makes a friendship easy?'),
+    'Hi Deepanshu! What makes a friendship easy?',
+  );
 });

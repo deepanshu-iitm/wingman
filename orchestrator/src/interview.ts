@@ -76,12 +76,19 @@ const fallbackQuestions: Record<InterviewDimension, string> = {
 };
 
 const fallbackReplies = [
-  'Oh, I get that — that sounds really natural for you.',
-  'That makes sense. I can see why you would enjoy that.',
-  'I like that answer — it gives me a better feel for your vibe.',
-  'Honestly, that is a useful detail. Thanks for being open.',
-  'Got you. Let me ask one more thing while we are here.',
+  'Nice, I get that.',
+  'That sounds fun.',
+  'Got it.',
+  'Fair enough.',
+  'I like that.',
 ] as const;
+
+function shortenAtWordBoundary(value: string, maxLength: number): string {
+  const text = value.trim();
+  if (text.length <= maxLength) return text;
+  const boundary = text.lastIndexOf(' ', maxLength - 1);
+  return `${text.slice(0, Math.max(1, boundary)).trimEnd()}…`;
+}
 
 export function fallbackInterviewStep(
   coveredDimensions: InterviewDimension[],
@@ -136,20 +143,18 @@ export async function generateInterviewStep(
         {
           role: 'system',
           content:
-            'You are Wingman chatting like a warm, curious new friend—not conducting an interview. ' +
-            'React briefly and genuinely to the latest answer, using one concrete detail from it, ' +
-            'then ask exactly one relaxed follow-up that feels like the natural next thing a friend ' +
-            'would ask. Match the user’s energy and vocabulary without copying their sentence. ' +
-            'Use casual contractions where natural, vary your acknowledgements and question shapes, ' +
-            'and occasionally share a tiny neutral reaction such as “that sounds fun” or “I get that.” ' +
-            'Never repeat a stock phrase, summarize their profile, or sound like a questionnaire. ' +
+            'You are Wingman chatting like a chill, friendly person—not conducting an interview. ' +
+            'Use simple everyday words and match the user’s energy. Do not analyze, summarize, ' +
+            'explain, praise, or repeat their answer. The reply must be one natural reaction of ' +
+            '2-6 words and no more than 45 characters, such as “Nice, I get that.” Then ask exactly ' +
+            'one relaxed follow-up in a single sentence of no more than 14 words or 110 characters. ' +
+            'No paragraphs, formal language, therapy language, or stock phrases like “thanks for sharing.” ' +
             'Prefer a useful follow-up over mechanically changing topics, while gradually covering: ' +
             `${INTERVIEW_DIMENSIONS.join(', ')}. Use them as coverage guidance, not as a ` +
             'clinical test. Never diagnose, infer sensitive traits, or ask about trauma, ' +
             'health, religion, politics, sexuality, or protected characteristics unless the ' +
             'user voluntarily raised the topic; even then, do not probe it. Prefer concrete ' +
-            'situations over rating-scale questions. Keep reply and question under 180 ' +
-            'characters each. Mark readyToFinalize only after enough information is present ' +
+            'situations over rating-scale questions. Mark readyToFinalize only after enough information is present ' +
             `and at least ${MIN_INTERVIEW_ANSWERS} user answers have been given.`,
         },
         {
@@ -170,8 +175,8 @@ export async function generateInterviewStep(
     throw error;
   }
 
-  const reply = parsed.reply.trim().slice(0, 180);
-  const question = parsed.question.trim().slice(0, 180);
+  const reply = shortenAtWordBoundary(parsed.reply, 45);
+  const question = shortenAtWordBoundary(parsed.question, 110);
   if (!reply || !question) {
     throw new InterviewGenerationError('Model returned an incomplete interview step');
   }

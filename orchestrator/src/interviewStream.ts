@@ -65,6 +65,13 @@ export function shouldFinalizeInterview(
   );
 }
 
+export function openingInterviewPrompt(
+  displayName: string,
+  question: string,
+): string {
+  return `Hi ${displayName.trim()}! ${question.trim()}`;
+}
+
 export function attachInterviewStream(
   server: Server,
   {
@@ -150,7 +157,10 @@ export function attachInterviewStream(
       let acceptingAnswerSince = 0;
       let lastFinal = '';
       let coveredDimensions: InterviewDimension[] = [];
-      const openingQuestion = randomOpeningQuestion();
+      const openingQuestion = openingInterviewPrompt(
+        displayName,
+        randomOpeningQuestion(),
+      );
       const turns: InterviewTurn[] = [
         { role: 'assistant', content: openingQuestion },
       ];

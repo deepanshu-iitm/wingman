@@ -51,6 +51,8 @@ test('generateInterviewStep asks a bounded adaptive follow-up', async () => {
   );
 
   assert.equal(result.readyToFinalize, false);
+  assert.ok(result.reply.length <= 45);
+  assert.ok(result.question.length <= 110);
   assert.deepEqual(result.coveredDimensions, [
     'planning_style',
     'communication_style',
