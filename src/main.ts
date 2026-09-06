@@ -185,7 +185,11 @@ function myPersonas() {
 
 function activePersona() {
   if (!conn || activePersonaId === null) return null;
-  return conn.db.myPersona.id.find(activePersonaId) ?? null;
+  return (
+    [...conn.db.myPersona.iter()].find(
+      (persona) => persona.id === activePersonaId,
+    ) ?? null
+  );
 }
 
 function activeSession() {
