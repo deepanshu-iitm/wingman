@@ -11,6 +11,7 @@ import ArchiveConversationReducer from "../archive_conversation_reducer";
 import CompleteConversationReducer from "../complete_conversation_reducer";
 import CreatePersonaReducer from "../create_persona_reducer";
 import FinalizeSessionReducer from "../finalize_session_reducer";
+import PingPresenceReducer from "../ping_presence_reducer";
 import RegisterOrchestratorReducer from "../register_orchestrator_reducer";
 import ReleaseConversationReducer from "../release_conversation_reducer";
 import SendHumanMessageReducer from "../send_human_message_reducer";
@@ -24,6 +25,7 @@ export type ArchiveConversationParams = __Infer<typeof ArchiveConversationReduce
 export type CompleteConversationParams = __Infer<typeof CompleteConversationReducer>;
 export type CreatePersonaParams = __Infer<typeof CreatePersonaReducer>;
 export type FinalizeSessionParams = __Infer<typeof FinalizeSessionReducer>;
+export type PingPresenceParams = __Infer<typeof PingPresenceReducer>;
 export type RegisterOrchestratorParams = __Infer<typeof RegisterOrchestratorReducer>;
 export type ReleaseConversationParams = __Infer<typeof ReleaseConversationReducer>;
 export type SendHumanMessageParams = __Infer<typeof SendHumanMessageReducer>;

@@ -197,6 +197,19 @@ const deadline_timer = table(
   }
 );
 
+/**
+ * Lightweight presence table. A row exists while a persona owner is connected
+ * and in the chat view; the row is deleted on disconnect via onDisconnect.
+ * Clients subscribe to this to show a live/away indicator for matched partners.
+ */
+const chat_presence = table(
+  { name: 'chat_presence', public: true },
+  {
+    personaId: t.u64().primaryKey(),
+    updatedAt: t.timestamp(),
+  }
+);
+
 const spacetimedb = schema({
   persona,
   match_session,
@@ -207,6 +220,7 @@ const spacetimedb = schema({
   conversation_archive,
   orchestrator_config,
   deadline_timer,
+  chat_presence,
 });
 export default spacetimedb;
 
@@ -221,7 +235,26 @@ export const init = spacetimedb.init(ctx => {
   });
 });
 export const onConnect = spacetimedb.clientConnected(_ctx => {});
+// Presence expires from its heartbeat timestamp. Deleting a persona-level row
+// here would incorrectly mark another active tab for the same identity offline.
 export const onDisconnect = spacetimedb.clientDisconnected(_ctx => {});
+
+/** Upsert a presence heartbeat for the calling user's persona. */
+export const pingPresence = spacetimedb.reducer(
+  { personaId: t.u64() },
+  (ctx, { personaId }) => {
+    const persona = ctx.db.persona.id.find(personaId);
+    if (!persona) throw new SenderError('persona not found');
+    if (!persona.owner.equals(ctx.sender)) throw new SenderError('not your persona');
+
+    const existing = ctx.db.chat_presence.personaId.find(personaId);
+    if (existing) {
+      ctx.db.chat_presence.personaId.update({ ...existing, updatedAt: ctx.timestamp });
+    } else {
+      ctx.db.chat_presence.insert({ personaId, updatedAt: ctx.timestamp });
+    }
+  }
+);
 
 // ── Views: scoped persona access ─────────────────────────────────────────────────
 

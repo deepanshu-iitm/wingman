@@ -72,6 +72,7 @@ let watchForNewPersona = false;
 let expandedId: bigint | null = null;
 let matchSeen = false; // user has moved past the celebration into chat
 let showAgentConvo = false; // expanded agent conversation in chat view
+let presenceHeartbeat: ReturnType<typeof setInterval> | null = null;
 
 // `matchSeen` must survive reloads, or onApplied re-shows the celebration on
 // top of the chat the user already moved on to. Persist it per session id.
@@ -148,8 +149,8 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function avatar(seed: string | bigint, cls = "wg-av"): string {
-  return `<div class="${cls}">${avatarSvg(characterFor(seed))}</div>`;
+function avatar(seed: string | bigint, cls = "wg-av", gender?: string): string {
+  return `<div class="${cls}">${avatarSvg(characterFor(seed), gender)}</div>`;
 }
 
 /** Qualitative signal state — a direction indicator, never a compatibility %. */
@@ -387,14 +388,14 @@ function renderSignup(): string {
         </button>
       </div>
       <div class="wg-signup-aside">
-        <div class="wg-signup-avatar">${avatarSvg(characterFor(seed))}</div>
+        <div class="wg-signup-avatar">${avatarSvg(seed)}</div>
         <div>
           <div class="wg-h2">${escapeHtml(signup.name || "Hey there")}<span class="wg-caret"></span></div>
           <p class="wg-lead">Your Wingman does the mingling. You just show up for the ones worth meeting.</p>
         </div>
         <div class="wg-shuffle-row">
-          ${["a", "s", "k", "m"]
-            .map((c) => `<div class="wg-shuffle-chip">${avatarSvg(c as never)}</div>`)
+          ${["preview-1", "preview-2", "preview-3", "preview-4"]
+            .map((s) => `<div class="wg-shuffle-chip">${avatarSvg(s)}</div>`)
             .join("")}
         </div>
       </div>
@@ -622,7 +623,7 @@ function renderRead(): string {
     ${brand}
     <div class="wg-read">
       <div class="wg-read-card">
-        <div class="wg-read-avatar">${avatarSvg(characterFor(p.id))}</div>
+        <div class="wg-read-avatar">${avatarSvg(p.displayName)}</div>
         <div>
           <div class="wg-eyebrow">Your agent</div>
           <div class="wg-h2">${escapeHtml(p.displayName)}</div>
@@ -680,24 +681,24 @@ function renderRoom(): string {
 
   const seeds =
     convos.length > 0
-      ? convos.map((c) => c.partnerPersonaId)
+      ? convos.map((c) => c.partnerDisplayName)
       : conn
-        ? [...conn.db.publicPersona.iter()].slice(0, 8).map((p) => p.id)
+        ? [...conn.db.publicPersona.iter()].slice(0, 8).map((p) => p.displayName)
         : [];
-  const orbiters = (seeds.length > 0 ? seeds : [1n, 2n, 3n, 4n, 5n, 6n]).slice(
+  const orbiters = (seeds.length > 0
+    ? seeds
+    : ["one", "two", "three", "four", "five", "six"]).slice(
     0,
     10,
   );
 
-  const ring = (list: bigint[], radius: number) =>
+  const ring = (list: string[], radius: number) =>
     list
       .map((seed, i) => {
         const a = (i / list.length) * Math.PI * 2;
         const x = 50 + Math.cos(a) * radius;
         const y = 50 + Math.sin(a) * radius;
-        return `<div class="wg-orbiter" style="left:${x}%;top:${y}%">${avatarSvg(
-          characterFor(seed),
-        )}</div>`;
+        return `<div class="wg-orbiter" style="left:${x}%;top:${y}%">${avatarSvg(seed)}</div>`;
       })
       .join("");
 
@@ -789,7 +790,7 @@ function renderConvoCard(c: Conversation): string {
   return `
     <div class="wg-convo">
       <div class="wg-convo-head">
-        <div class="wg-av av">${avatarSvg(characterFor(c.partnerPersonaId))}</div>
+        <div class="wg-av av">${avatarSvg(c.partnerDisplayName)}</div>
         <div class="wg-convo-name">
           <div class="n">${escapeHtml(c.partnerDisplayName)}</div>
           <div class="t">turn ${done} of ${total}</div>
@@ -823,10 +824,12 @@ function renderBubble(
   const mine = m.senderPersonaId === c.initiatorPersonaId;
   const human = m.source === "human";
   const cls = human ? "human" : mine ? "mine" : "";
-  const seed = mine ? c.initiatorPersonaId : c.partnerPersonaId;
+  const seed = mine
+    ? activePersona()?.displayName ?? c.initiatorPersonaId
+    : c.partnerDisplayName;
   return `
     <div class="wg-bubble ${cls}">
-      <div class="chip">${avatarSvg(characterFor(seed))}</div>
+      <div class="chip">${avatarSvg(seed)}</div>
       <div class="text">${escapeHtml(m.content)}</div>
     </div>`;
 }
@@ -836,12 +839,32 @@ function renderChatBubble(
   c: Conversation,
 ): string {
   const mine = m.senderPersonaId === c.initiatorPersonaId;
-  const seed = mine ? c.initiatorPersonaId : c.partnerPersonaId;
+  const seed = mine
+    ? activePersona()?.displayName ?? c.initiatorPersonaId
+    : c.partnerDisplayName;
   return `
     <div class="wg-bubble ${mine ? "mine" : "partner"}">
-      <div class="chip">${avatarSvg(characterFor(seed))}</div>
+      <div class="chip">${avatarSvg(seed)}</div>
       <div class="text">${escapeHtml(m.content)}</div>
     </div>`;
+}
+
+function startPresenceHeartbeat() {
+  if (!conn || activePersonaId === null) return;
+  conn.reducers.pingPresence({ personaId: activePersonaId });
+  if (presenceHeartbeat !== null) clearInterval(presenceHeartbeat);
+  presenceHeartbeat = setInterval(() => {
+    if (conn && activePersonaId !== null) {
+      conn.reducers.pingPresence({ personaId: activePersonaId });
+    }
+  }, 30_000);
+}
+
+function stopPresenceHeartbeat() {
+  if (presenceHeartbeat !== null) {
+    clearInterval(presenceHeartbeat);
+    presenceHeartbeat = null;
+  }
 }
 
 // ── 06/07 · Expanded overlay + take the wheel ────────────────────────────────
@@ -875,7 +898,7 @@ function renderOverlay(): string {
   <div class="wg-overlay" data-action="overlay-bg">
     <div class="wg-expanded ${controlledByMe ? "human" : ""}">
       <div class="wg-expanded-head">
-        <div class="wg-av av">${avatarSvg(characterFor(c.partnerPersonaId))}</div>
+        <div class="wg-av av">${avatarSvg(c.partnerDisplayName)}</div>
         <div style="flex:1">
           <div style="font-size:19px;font-weight:800">${escapeHtml(c.partnerDisplayName)}</div>
           <div style="font-size:13px;opacity:.7">${controlledByMe ? "you're driving" : sig.label}</div>
@@ -918,8 +941,8 @@ function renderMatch(): string {
     ${confetti}
     <div class="wg-match-eyebrow"><span class="wg-dot"></span> it's mutual</div>
     <div class="wg-match-pair">
-      <div class="p">${avatarSvg(characterFor(p?.id ?? "you"))}</div>
-      <div class="p">${avatarSvg(characterFor(top.partnerPersonaId))}</div>
+      <div class="p">${avatarSvg(p?.displayName ?? "you")}</div>
+      <div class="p">${avatarSvg(top.partnerDisplayName)}</div>
     </div>
     <div class="wg-match-title">It's a match.</div>
     <div class="wg-match-sub">You and ${escapeHtml(firstName(top.partnerDisplayName))} both said yes.</div>
@@ -953,6 +976,12 @@ function renderChat(): string {
   const humanMsgs = allMsgs.filter((m) => m.source === "human");
   const partnerFirst = escapeHtml(firstName(c.partnerDisplayName));
 
+  // Partner presence: green if they pinged within the last 60 s.
+  const partnerPresence = conn.db.chatPresence.personaId.find(c.partnerPersonaId);
+  const partnerLive = partnerPresence
+    ? Date.now() - Number(partnerPresence.updatedAt.microsSinceUnixEpoch / 1000n) < 60_000
+    : false;
+
   const agentSection = showAgentConvo
     ? `<div class="wg-agent-convo">
         <div class="wg-agent-convo-head">
@@ -975,12 +1004,15 @@ function renderChat(): string {
     <div class="wg-chat">
       <div class="wg-chat-head">
         <button class="wg-close" data-action="back-to-match">←</button>
-        <div class="wg-av av" style="width:44px;height:44px">${avatarSvg(characterFor(c.partnerPersonaId))}</div>
+        <div class="wg-av av" style="width:44px;height:44px">${avatarSvg(c.partnerDisplayName)}</div>
         <div style="flex:1">
           <div style="font-size:19px;font-weight:800">${escapeHtml(c.partnerDisplayName)}</div>
           <div class="wg-privacy">you matched</div>
         </div>
-        <div class="wg-live-pill"><span class="wg-dot"></span> live</div>
+        <div class="wg-live-pill ${partnerLive ? "is-live" : "is-away"}">
+          <span class="wg-dot ${partnerLive ? "" : "wg-dot-away"}"></span>
+          ${partnerLive ? "live" : "away"}
+        </div>
       </div>
       <div class="wg-summary">
         <div class="wg-eyebrow">Why your agents clicked</div>
@@ -1092,10 +1124,12 @@ async function handleAction(action: string, el: HTMLElement) {
     case "to-chat":
       markMatchSeen();
       showAgentConvo = false;
+      startPresenceHeartbeat();
       view = "chat";
       break;
     case "back-to-match":
       showAgentConvo = false;
+      stopPresenceHeartbeat();
       view = "match";
       break;
     case "toggle-agent-convo":
@@ -1661,6 +1695,7 @@ const builder = DbConnection.builder()
         } else if (activePersonaId !== null) {
           view = "read";
         }
+        if (view === "chat") startPresenceHeartbeat();
         scheduleRender();
       })
       .onError((ctx: ErrorContext) => console.error("Subscription error:", ctx.event))
@@ -1673,6 +1708,7 @@ const builder = DbConnection.builder()
         "SELECT * FROM conversation",
         "SELECT * FROM message",
         "SELECT * FROM match_result",
+        "SELECT * FROM chat_presence",
       ]);
 
     const bump = () => scheduleRender();
@@ -1682,6 +1718,9 @@ const builder = DbConnection.builder()
     c.db.message.onInsert(bump);
     c.db.matchResult.onInsert(bump);
     c.db.matchSession.onUpdate(bump);
+    c.db.chatPresence.onInsert(bump);
+    c.db.chatPresence.onUpdate(bump);
+    c.db.chatPresence.onDelete(bump);
 
     c.db.myPersona.onInsert((_ctx: EventContext, row) => {
       if (watchForNewPersona && myIdentity && row.owner.equals(myIdentity)) {

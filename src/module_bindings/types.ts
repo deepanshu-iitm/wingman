@@ -10,6 +10,12 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const ChatPresence = __t.object("ChatPresence", {
+  personaId: __t.u64(),
+  updatedAt: __t.timestamp(),
+});
+export type ChatPresence = __Infer<typeof ChatPresence>;
+
 export const Conversation = __t.object("Conversation", {
   id: __t.u64(),
   sessionId: __t.u64(),
