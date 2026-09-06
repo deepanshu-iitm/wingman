@@ -357,6 +357,9 @@ function render() {
 // ── 01 · Signup ──────────────────────────────────────────────────────────────
 function renderSignup(): string {
   const seed = signup.name || "you";
+  const emailInvalid =
+    signup.email.trim().length > 0 &&
+    !EMAIL_PATTERN.test(signup.email.trim());
   const ready =
     signup.name.trim().length > 0 && EMAIL_PATTERN.test(signup.email.trim());
   return `
@@ -377,7 +380,11 @@ function renderSignup(): string {
           <label class="wg-label" for="s-email">Where should we send your welcome?</label>
           <input class="wg-input" id="s-email" data-focus="s-email" data-field="email"
             type="email" inputmode="email" placeholder="you@example.com"
-            value="${escapeHtml(signup.email)}" maxlength="254" autocomplete="email" />
+            value="${escapeHtml(signup.email)}" maxlength="254" autocomplete="email"
+            aria-describedby="s-email-error" aria-invalid="${emailInvalid}" />
+          <p class="wg-field-error" id="s-email-error" role="alert" ${emailInvalid ? "" : "hidden"}>
+            Enter a valid email address, like you@example.com.
+          </p>
         </div>
         <div class="wg-field">
           <label class="wg-label">Age</label>
@@ -1307,6 +1314,14 @@ app.addEventListener("input", (e) => {
     if (start) {
       start.disabled =
         !signup.name.trim() || !EMAIL_PATTERN.test(signup.email.trim());
+    }
+    if (t.dataset.field === "email") {
+      const invalid =
+        signup.email.trim().length > 0 &&
+        !EMAIL_PATTERN.test(signup.email.trim());
+      t.setAttribute("aria-invalid", String(invalid));
+      const error = app.querySelector<HTMLElement>("#s-email-error");
+      if (error) error.hidden = !invalid;
     }
   }
 });

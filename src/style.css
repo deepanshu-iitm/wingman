@@ -213,6 +213,16 @@ textarea {
 .wg-input:focus {
   box-shadow: var(--shadow);
 }
+.wg-input[aria-invalid="true"] {
+  border-color: var(--coral);
+  box-shadow: 0 0 0 3px rgba(255, 92, 66, 0.16);
+}
+.wg-field-error {
+  color: #b42318;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+}
 textarea.wg-input {
   height: auto;
   min-height: 120px;
