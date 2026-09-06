@@ -8,6 +8,7 @@ import {
   fallbackInterviewStep,
   generateInterviewStep,
   MAX_INTERVIEW_ANSWERS,
+  MIN_INTERVIEW_ANSWERS,
   type InterviewDimension,
   type InterviewTurn,
 } from './interview.js';
@@ -52,6 +53,16 @@ export function combineTranscriptSegments(
   if (!second || first.endsWith(second)) return first;
   if (second.startsWith(first)) return second;
   return `${first} ${second}`.replace(/\s+([,.!?])/g, '$1');
+}
+
+export function shouldFinalizeInterview(
+  answerCount: number,
+  finishRequested: boolean,
+): boolean {
+  return (
+    answerCount >= MAX_INTERVIEW_ANSWERS ||
+    (finishRequested && answerCount >= MIN_INTERVIEW_ANSWERS)
+  );
 }
 
 export function attachInterviewStream(
@@ -219,7 +230,10 @@ export function attachInterviewStream(
         sendJson(client, { type: 'status', state: 'thinking' });
 
         const answerCount = turns.filter((turn) => turn.role === 'user').length;
-        if (finishRequested || answerCount >= MAX_INTERVIEW_ANSWERS) {
+        if (finishRequested && answerCount < MIN_INTERVIEW_ANSWERS) {
+          finishRequested = false;
+        }
+        if (shouldFinalizeInterview(answerCount, finishRequested)) {
           const closingReply =
             'Thanks — I have enough to build your friendship profile now.';
           turns.push({ role: 'assistant', content: closingReply });
@@ -374,13 +388,13 @@ export function attachInterviewStream(
                 const answerCount = turns.filter(
                   (turn) => turn.role === 'user',
                 ).length;
-                if (answerCount > 0) {
+                if (answerCount >= MIN_INTERVIEW_ANSWERS) {
                   void finishInterview();
                 } else {
                   finishRequested = false;
                   sendJson(client, {
                     type: 'finish.rejected',
-                    error: 'Answer at least one question before finishing.',
+                    error: `Answer at least ${MIN_INTERVIEW_ANSWERS} questions before finishing.`,
                   });
                 }
               }, 2_500);

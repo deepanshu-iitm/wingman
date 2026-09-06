@@ -447,7 +447,7 @@ function renderInterview(): string {
               interviewBusy
                 ? "Thinking about what you said…"
                 : recording
-                  ? "Tap ✓ when you have shared enough."
+                  ? "Wingman continues automatically. Tap ✓ after at least 3 answers."
                   : "Wingman asks aloud. Answer naturally, then pause for three seconds."
             }
           </p>
