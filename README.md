@@ -311,7 +311,7 @@ VITE_MODULE_NAME=wingman
   <br />
   <strong>Speak once. Let your Wingman find the people worth meeting.</strong>
   <br />
-  <br />
+  
   <a href="https://wingman-six-mu.vercel.app">
     <img src="https://img.shields.io/badge/OPEN_THE_LIVE_APP-FFB020?style=for-the-badge&labelColor=16130E" alt="Open Wingman" />
   </a>
