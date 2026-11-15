@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "build": "node init && spacetime build",
+    "build": "spacetime build",
     "publish": "spacetime publish"
   },
   "keywords": [],
